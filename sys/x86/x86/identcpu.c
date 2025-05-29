@@ -39,7 +39,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__FBSDID("$FreeBSD: releng/11.4/sys/x86/x86/identcpu.c 354658 2019-11-12 19:35:46Z scottl $");
 
 #include "opt_cpu.h"
 
@@ -1754,6 +1754,7 @@ print_AMD_info(void)
 		    && (cpu_id & 0x00f) > 0x07))) {
 		/* K6-2(new core [Stepping 8-F]), K6-III or later */
 		amd_whcr = rdmsr(0xc0000082);
+		printf("new whcr %llx\n",amd_whcr);
 		if (!(amd_whcr & (0x3ff << 22))) {
 			printf("Write Allocate Disable\n");
 		} else {
@@ -1766,6 +1767,7 @@ print_AMD_info(void)
 		   && ((cpu_id & 0x0f0) > 0x50)) {
 		/* K6, K6-2(old core) */
 		amd_whcr = rdmsr(0xc0000082);
+		printf("old whcr %llx\n",amd_whcr);
 		if (!(amd_whcr & (0x7f << 1))) {
 			printf("Write Allocate Disable\n");
 		} else {

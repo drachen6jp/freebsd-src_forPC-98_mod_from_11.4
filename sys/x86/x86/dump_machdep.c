@@ -25,7 +25,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__FBSDID("$FreeBSD: releng/11.4/sys/x86/x86/dump_machdep.c 276772 2015-01-07 01:01:39Z markj $");
 
 #include "opt_watchdog.h"
 

@@ -148,8 +148,8 @@ configure_final(void *dummy)
 			max_sector = bios_geom & 0xff;
 			printf(
 		"0..%d=%d cylinders, 0..%d=%d heads, 1..%d=%d sectors\n",
-			       max_cylinder, max_cylinder + 1,
-			       max_head, max_head + 1,
+			       max_cylinder, max_cylinder,
+			       max_head, max_head,
 			       max_sector, max_sector);
 		}
 		printf(" %d accounted for\n", bootinfo.bi_n_bios_used);

@@ -34,7 +34,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__FBSDID("$FreeBSD: releng/11.4/sys/x86/x86/delay.c 340270 2018-11-08 22:42:55Z jhb $");
 
 /* Generic x86 routines to handle delay */
 
@@ -133,5 +133,9 @@ cpu_lock_delay(void)
 	if (tsc_freq != 0)
 		delay_tsc(1);
 	else
+#ifndef	PC98
 		inb(0x84);
+#else
+		outb(0x5f,1);
+#endif
 }

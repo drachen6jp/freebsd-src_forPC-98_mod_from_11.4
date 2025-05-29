@@ -25,7 +25,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__FBSDID("$FreeBSD: releng/11.4/sys/x86/x86/mp_x86.c 349958 2019-07-12 22:31:12Z jhb $");
 
 #ifdef __i386__
 #include "opt_apic.h"
@@ -1366,7 +1366,7 @@ cpususpend_handler(void)
 		ia32_pause();
 
 	/* Re-apply microcode updates. */
-	ucode_reload();
+//	ucode_reload();
 
 	if (cpu_ops.cpu_resume)
 		cpu_ops.cpu_resume();

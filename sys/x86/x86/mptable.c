@@ -25,7 +25,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__FBSDID("$FreeBSD: releng/11.4/sys/x86/x86/mptable.c 261087 2014-01-23 20:10:22Z jhb $");
 
 #include "opt_mptable_force_htt.h"
 #include <sys/param.h>
@@ -119,6 +119,7 @@ static bus_type_name bus_type_table[] =
 {
 	{UNKNOWN_BUSTYPE, "CBUS  "},
 	{UNKNOWN_BUSTYPE, "CBUSII"},
+	{CBUSII, "NEC98 "},
 	{EISA, "EISA  "},
 	{UNKNOWN_BUSTYPE, "FUTURE"},
 	{UNKNOWN_BUSTYPE, "INTERN"},
@@ -291,6 +292,11 @@ found:
 		}
 		mpct = NULL;
 	} else {
+#ifdef PC98
+		mpct = (mpcth_t)pmap_mapdev(mpfps->pap,4096);
+		mpet = (ext_entry_ptr)((char *)mpct +
+			    mpct->base_table_length);
+#else
 		if ((uintptr_t)mpfps->pap >= 1024 * 1024) {
 			printf("%s: Unable to map MP Configuration Table\n",
 			    __func__);
@@ -308,6 +314,7 @@ found:
 		    (uintptr_t)mpfps->pap < 1024 * 1024)
 			mpet = (ext_entry_ptr)((char *)mpct +
 			    mpct->base_table_length);
+#endif
 		if (mpct->signature[0] != 'P' || mpct->signature[1] != 'C' ||
 		    mpct->signature[2] != 'M' || mpct->signature[3] != 'P') {
 			printf("%s: MP Config Table has bad signature: %c%c%c%c\n",
@@ -749,6 +756,12 @@ mptable_parse_io_int(int_entry_ptr intr)
 			    intr->src_bus_irq)
 				ioapic_disable_pin(ioapic, intr->src_bus_irq);
 			break;
+		case CBUSII:
+			ioapic_set_bus(ioapic, pin, APIC_BUS_EISA);
+			if (intr->src_bus_irq == pin)
+				break;
+			ioapic_remap_vector(ioapic, pin, intr->src_bus_irq);
+				break;
 		case PCI:
 			ioapic_set_bus(ioapic, pin, APIC_BUS_PCI);
 			break;
