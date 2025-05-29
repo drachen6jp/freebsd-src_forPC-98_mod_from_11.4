@@ -51,7 +51,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__FBSDID("$FreeBSD: releng/11.4/sys/dev/fdc/fdc.c 331722 2018-03-29 02:50:57Z eadler $");
 
 #include "opt_fdc.h"
 
@@ -148,10 +148,11 @@ static struct fd_type fd_searchlist_360k[] = {
 
 static struct fd_type fd_searchlist_12m[] = {
 #ifdef PC98
+	{ FDF_5_1230 | FL_AUTO },
+	{ FDF_5_640 | FL_AUTO },
 	{ FDF_5_1200 | FL_AUTO },
 	{ FDF_5_720 | FL_AUTO },
 	{ FDF_5_360 | FL_AUTO },
-	{ FDF_5_640 | FL_AUTO },
 	{ FDF_5_1230 | FL_AUTO },
 #else
 	{ FDF_5_1200 | FL_AUTO },
@@ -170,11 +171,12 @@ static struct fd_type fd_searchlist_720k[] = {
 
 static struct fd_type fd_searchlist_144m[] = {
 #ifdef PC98
+	{ FDF_3_1230 | FL_AUTO},
+	{ FDF_3_640 | FL_AUTO},
 	{ FDF_3_1440 | FL_AUTO},
 	{ FDF_3_1200 | FL_AUTO},
 	{ FDF_3_720 | FL_AUTO},
 	{ FDF_3_360 | FL_AUTO},
-	{ FDF_3_640 | FL_AUTO},
 	{ FDF_3_1230 | FL_AUTO},
 #else
 	{ FDF_3_1440 | FL_AUTO},
@@ -358,8 +360,7 @@ SYSCTL_INT(_debug_fdc, OID_AUTO, settle, CTLFLAG_RW, &settle, 0,
 static void
 fdprinttype(struct fd_type *ft)
 {
-
-	printf("(%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,0x%x)",
+	printf("(%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,0x%x)\n",
 	    ft->sectrac, ft->secsize, ft->datalen, ft->gap, ft->tracks,
 	    ft->size, ft->trans, ft->heads, ft->f_gap, ft->f_inter,
 	    ft->offset_side2, ft->flags);
@@ -379,21 +380,18 @@ fdsettype(struct fd_data *fd, struct fd_type *ft)
 static inline void
 fdregwr(struct fdc_data *fdc, int reg, uint8_t v)
 {
-
 	bus_space_write_1(fdc->iot, fdc->ioh[reg], fdc->ioff[reg], v);
 }
 
 static inline uint8_t
 fdregrd(struct fdc_data *fdc, int reg)
 {
-
 	return bus_space_read_1(fdc->iot, fdc->ioh[reg], fdc->ioff[reg]);
 }
 
 static void
 fdctl_wr(struct fdc_data *fdc, u_int8_t v)
 {
-
 	fdregwr(fdc, FDCTL, v);
 }
 
@@ -401,7 +399,6 @@ fdctl_wr(struct fdc_data *fdc, u_int8_t v)
 static void
 fdout_wr(struct fdc_data *fdc, u_int8_t v)
 {
-
 	fdregwr(fdc, FDOUT, v);
 }
 #endif
@@ -409,7 +406,6 @@ fdout_wr(struct fdc_data *fdc, u_int8_t v)
 static u_int8_t
 fdsts_rd(struct fdc_data *fdc)
 {
-
 	return fdregrd(fdc, FDSTS);
 }
 
@@ -417,7 +413,6 @@ fdsts_rd(struct fdc_data *fdc)
 static void
 fddsr_wr(struct fdc_data *fdc, u_int8_t v)
 {
-
 	fdregwr(fdc, FDDSR, v);
 }
 #endif
@@ -425,14 +420,12 @@ fddsr_wr(struct fdc_data *fdc, u_int8_t v)
 static void
 fddata_wr(struct fdc_data *fdc, u_int8_t v)
 {
-
 	fdregwr(fdc, FDDATA, v);
 }
 
 static u_int8_t
 fddata_rd(struct fdc_data *fdc)
 {
-
 	return fdregrd(fdc, FDDATA);
 }
 
@@ -440,7 +433,6 @@ fddata_rd(struct fdc_data *fdc)
 static u_int8_t
 fdin_rd(struct fdc_data *fdc)
 {
-
 	return fdregrd(fdc, FDCTL);
 }
 #endif
@@ -468,7 +460,6 @@ fdc_err(struct fdc_data *fdc, const char *s)
 			device_printf(fdc->fdc_dev, "too many errors, not "
 						    "logging any more\n");
 	}
-
 	return (1);
 }
 
@@ -549,6 +540,7 @@ fdc_cmd(struct fdc_data *fdc, int n_out, ...)
 				"cmd %x failed at out byte %d of %d\n",
 				cmd, n + 1, n_out);
 			fdc->flags |= FDC_NEEDS_RESET;
+			fdc->flags |= FDC_NEEDS_RESET;
 			va_end(ap);
 			return fdc_err(fdc, msg);
 		}
@@ -561,6 +553,7 @@ fdc_cmd(struct fdc_data *fdc, int n_out, ...)
 			snprintf(msg, sizeof(msg),
 				"cmd %02x failed at in byte %d of %d\n",
 				cmd, n + 1, n_in);
+			fdc->flags |= FDC_NEEDS_RESET;
 			fdc->flags |= FDC_NEEDS_RESET;
 			va_end(ap);
 			return fdc_err(fdc, msg);
@@ -579,6 +572,7 @@ static int pc98_trans_prev = -1;
 static void
 set_density(struct fdc_data *fdc)
 {
+//	printf("pc98 fd set density %x out 0xbe %x\n",pc98_trans ,(pc98_trans != 1 ? FDP_FDDEXC : 0) | FDP_PORTEXC);
 	/* always motor on */
 	fdregwr(fdc, FDP, (pc98_trans != 1 ? FDP_FDDEXC : 0) | FDP_PORTEXC);
 	DELAY(100);
@@ -602,9 +596,13 @@ pc98_fd_check_ready(struct fd_data *fd)
 		if ((fdc_in(fdc, &status) == 0) && (status & NE7_ST3_RD)) {
 			fdctl_wr(fdc, FDC_DMAE | FDC_MTON);
 			DELAY(10);
+			fd->flags |= FD_MOTOR;
 			return (0);
 		}
 	}
+	mtx_lock(&fd->fdc->fdc_mtx);
+	fd->flags |= FD_NEWDISK;
+	mtx_unlock(&fd->fdc->fdc_mtx);
 	return (-1);
 }
 
@@ -728,7 +726,7 @@ fdc_sense_int(struct fdc_data *fdc, int *st0p, int *cylp)
 		/*
 		 * There doesn't seem to have been an interrupt.
 		 */
-		return (FD_NOT_VALID);
+//		return (FD_NOT_VALID);
 	}
 
 	if (fdc_in(fdc, &cyl) < 0)
@@ -927,6 +925,7 @@ fdc_worker(struct fdc_data *fdc)
 	/* Have we exhausted our retries ? */
 	bp = fdc->bp;
 	fd = fdc->fd;
+
 	if (bp != NULL &&
 		(fdc->retry >= retries || (fd->options & FDOPT_NORETRY))) {
 		if ((debugflags & 4))
@@ -1009,6 +1008,10 @@ fdc_worker(struct fdc_data *fdc)
 	}
 	if (pc98_trans != fd->pc98_trans) {
 		if (fd->type == FDT_144M) {
+//			printf("1.44M settei %x\n",
+//			    (device_get_unit(fd->dev) << 5) | 0x10 |
+//			    (pc98_trans >> 1));
+
 			fdregwr(fdc, FDEM,
 			    (device_get_unit(fd->dev) << 5) | 0x10 |
 			    (pc98_trans >> 1));
@@ -1017,6 +1020,8 @@ fdc_worker(struct fdc_data *fdc)
 		}
 		fd->pc98_trans = pc98_trans;
 	}
+//	printf("fd set %x %x\n",fd->pc98_trans,fd->ft->trans);
+	
 #else
 	fd_select(fd);
 	if (fdc->fdct == FDC_ENHANCED)
@@ -1031,8 +1036,9 @@ fdc_worker(struct fdc_data *fdc)
 		    !(fdin_rd(fdc) & FDI_DCHG) &&
 #endif
 		    !(fd->flags & FD_EMPTY)) ||
-		    fd_probe_disk(fd, &need_recal) == 0)
+		    fd_probe_disk(fd, &need_recal) == 0){
 			return (fdc_biodone(fdc, 0));
+			}
 		return (1);
 	}
 
@@ -1097,7 +1103,8 @@ fdc_worker(struct fdc_data *fdc)
 	    fdc->retry > 2) {
 #ifdef PC98
 		pc98_fd_check_ready(fd);
-#endif
+#else
+//#endif
 		retry_line = __LINE__;
 		if (fdc_cmd(fdc, 2, NE7CMD_RECAL, fd->fdsu, 0))
 			return (1);
@@ -1108,6 +1115,7 @@ fdc_worker(struct fdc_data *fdc)
 		retry_line = __LINE__;
 		if ((st0 & 0xc0) || cyl != 0)
 			return (1);
+#endif
 		need_recal &= ~(1 << fd->fdsu);
 		fd->track = 0;
 		/* let the heads settle */
@@ -1118,22 +1126,37 @@ fdc_worker(struct fdc_data *fdc)
 	/*
 	 * SEEK to where we want to be
 	 */
-	if (cylinder != fd->track) {
+//	if (cylinder != fd->track) {
+	if (1) {
 #ifdef PC98
+//		printf("seek cyl %d track %d\n",cylinder,fd->track);
+//		printf("seek head %d sector %d\n",head,sec);
 		pc98_fd_check_ready(fd);
-#endif		
-		retry_line = __LINE__;
-		if (fdc_cmd(fdc, 3, NE7CMD_SEEK, fd->fdsu, descyl, 0))
+		if (fdc_cmd(fdc, 3, NE7CMD_SEEK, fd->fdsu, descyl, 0)){
+			printf("seek miss\n");
 			return (1);
+		}
+		tsleep(fdc, PRIBIO, "fdseek", hz);
+//#endif		
+#else
+		retry_line = __LINE__;
+		if (fdc_cmd(fdc, 3, NE7CMD_SEEK, fd->fdsu, descyl, 0)){
+			printf("seek miss\n");
+			return (1);
+		}
 		tsleep(fdc, PRIBIO, "fdseek", hz);
 		retry_line = __LINE__;
-		if (fdc_sense_int(fdc, &st0, &cyl) == FD_NOT_VALID)
+		if (fdc_sense_int(fdc, &st0, &cyl) == FD_NOT_VALID){
+			printf("sense miss\n");
 			return (1); /* XXX */
+		}
 		retry_line = __LINE__;
 		if ((st0 & 0xc0) || cyl != descyl) {
 			need_recal |= (1 << fd->fdsu);
+			printf("need recal\n");
 			return (1);
 		}
+#endif		
 		/* let the heads settle */
 		if (settle)
 			tsleep(fdc->fd, PRIBIO, "fdhdstl", settle);
@@ -1202,8 +1225,10 @@ fdc_worker(struct fdc_data *fdc)
 		    fd->ft->sectrac,		/* sectors/track */
 		    fd->ft->gap,		/* gap size */
 		    fd->ft->datalen,		/* data length */
-		    0))
+		    0)){
+			printf("read error\n");
 			return (1);
+		}
 		break;
 	case BIO_WRITE:
 		retry_line = __LINE__;
@@ -1217,8 +1242,10 @@ fdc_worker(struct fdc_data *fdc)
 		    fd->ft->sectrac,		/* sectors/track */
 		    fd->ft->gap,		/* gap size */
 		    fd->ft->datalen,		/* data length */
-		    0))
+		    0)){
+			printf("write error\n");
 			return (1);
+		}
 		break;
 	default:
 		KASSERT(0 == 1, ("Wrong bio_cmd %x\n", bp->bio_cmd));
@@ -1257,8 +1284,9 @@ fdc_worker(struct fdc_data *fdc)
 	}
 
 	retry_line = __LINE__;
-	if (fdc_read_status(fdc))
+	if (fdc_read_status(fdc)){
 		return (1);
+	}
 
 	if (debugflags & 0x10)
 		printf("  -> %x %x %x %x\n",
@@ -1267,6 +1295,10 @@ fdc_worker(struct fdc_data *fdc)
 
 	st0 = fdc->status[0] & NE7_ST0_IC;
 	if (st0 != 0) {
+		mtx_lock(&fdc->fdc_mtx);
+		fd->flags |= FD_NEWDISK;
+		mtx_unlock(&fdc->fdc_mtx);
+
 		retry_line = __LINE__;
 		if (st0 == NE7_ST0_IC_AT && fdc->status[1] & NE7_ST1_OR) {
 			/*
@@ -1414,20 +1446,31 @@ fd_probe_disk(struct fd_data *fd, int *recal)
 	mtx_lock(&fdc->fdc_mtx);
 	fd->flags |= FD_NEWDISK;
 	mtx_unlock(&fdc->fdc_mtx);
-	if (fdc_cmd(fdc, 2, NE7CMD_RECAL, fd->fdsu, 0))
+	if (fdc_cmd(fdc, 2, NE7CMD_RECAL, fd->fdsu, 0)){
+		printf("recal err\n");
 		goto done;
+	}
 	tsleep(fdc, PRIBIO, "fdrecal", hz);
-	if (fdc_sense_int(fdc, &st0, &cyl) == FD_NOT_VALID)
-		goto done;	/* XXX */
-	if ((st0 & 0xc0) || cyl != 0)
-		goto done;
+	if (fdc_sense_int(fdc, &st0, &cyl) == FD_NOT_VALID){
+		printf("not valid\n");
+//		goto done;	/* XXX */
+	}
+////////	if ((st0 & 0xc0) || cyl != 0){
 
-	/* Seek to track 1 */
-	if (fdc_cmd(fdc, 3, NE7CMD_SEEK, fd->fdsu, 1, 0))
+	if (st0 & 0xc0){
+//		printf("status0 busy?\n");
 		goto done;
+	}
+	/* Seek to track 1 */
+	if (fdc_cmd(fdc, 3, NE7CMD_SEEK, fd->fdsu, 1, 0)){
+		printf("not seek\n");
+		goto done;
+	}
 	tsleep(fdc, PRIBIO, "fdseek", hz);
-	if (fdc_sense_int(fdc, &st0, &cyl) == FD_NOT_VALID)
-		goto done;	/* XXX */
+	if (fdc_sense_int(fdc, &st0, &cyl) == FD_NOT_VALID){
+		printf("not valid2\n");
+//		goto done;	/* XXX */
+	}
 	*recal |= (1 << fd->fdsu);
 #ifndef PC98
 	if (fdin_rd(fdc) & FDI_DCHG) {
@@ -1440,8 +1483,10 @@ fd_probe_disk(struct fd_data *fd, int *recal)
 #else
 	{
 #endif
-		if (fdc_sense_drive(fdc, &st3) != 0)
-			goto done;
+		if (fdc_sense_drive(fdc, &st3) != 0){
+			printf("fdc_sense %x\n",fdc_sense_drive(fdc,&st3) );
+//			goto done;
+		}
 		if (debugflags & 0x40)
 			printf("Got disk in probe\n");
 		mtx_lock(&fdc->fdc_mtx);
@@ -1501,6 +1546,7 @@ fdmisccmd(struct fd_data *fd, u_int cmd, void *data)
 	do {
 		tsleep(bp, PRIBIO, "fdwait", hz);
 	} while (!(bp->bio_flags & BIO_DONE));
+
 	error = bp->bio_error;
 
 	free(bp, M_TEMP);
@@ -1554,12 +1600,17 @@ fdautoselect(struct fd_data *fd)
 		rv = fdmisccmd(fd, BIO_RDID, &id);
 		if (rv != 0)
 			continue;
-		if (id.cyl != 0 || id.head != 0 || id.secshift != fdtp->secsize)
+//		if (id.cyl != 0 || id.head != 0 || id.secshift != fdtp->secsize)
+//			continue;
+		if (id.secshift != fdtp->secsize)
 			continue;
 		id.cyl = 2;
 		id.head = fd->ft->heads - 1;
 		rv = fdmisccmd(fd, BIO_RDID, &id);
-		if (id.cyl != 2 || id.head != fdtp->heads - 1 ||
+//		if (id.cyl != 2 || id.head != fdtp->heads - 1 ||
+//		    id.secshift != fdtp->secsize)
+//			continue;
+		if (id.head != fdtp->heads - 1 ||
 		    id.secshift != fdtp->secsize)
 			continue;
 		if (rv == 0)
@@ -1570,10 +1621,16 @@ fdautoselect(struct fd_data *fd)
 	if (fdtp->heads == 0) {
 		if (debugflags & 0x40)
 			device_printf(fd->dev, "autoselection failed\n");
+#ifdef PC98
 		fdsettype(fd, fd_native_types[fd->type]);
+		return (0);
+#else
+		fdsettype(fd, fd_native_types[fd->type]);
+#endif
 		return (-1);
 	} else {
-		if (debugflags & 0x40) {
+//		if (debugflags & 0x40) {
+		if (1) {
 			device_printf(fd->dev,
 			    "autoselected %d KB medium\n",
 #ifdef PC98
@@ -1634,13 +1691,19 @@ fd_access(struct g_provider *pp, int r, int w, int e)
 	busy = 0;
 	if (pp->acr == 0 && pp->acw == 0 && pp->ace == 0) {
 #ifdef PC98
-		if (pc98_fd_check_ready(fd) == -1)
+		if (pc98_fd_check_ready(fd) == -1){
+//			printf("not ready\n");
 			return (ENXIO);
+		}
 #endif
-		if (fdmisccmd(fd, BIO_PROBE, NULL))
+		if (fdmisccmd(fd, BIO_PROBE, NULL)){
+//			printf("not probe\n");
 			return (ENXIO);
-		if (fd->flags & FD_EMPTY)
+		}
+		if (fd->flags & FD_EMPTY){
+//			printf("fd empty\n");
 			return (ENXIO);
+		}
 		if (fd->flags & FD_NEWDISK) {
 			if (fdautoselect(fd) != 0 &&
 			    (device_get_flags(fd->dev) & FD_NO_CHLINE)) {
@@ -1709,6 +1772,7 @@ fd_ioctl(struct g_provider *pp, u_long cmd, void *data, int fflag, struct thread
 #ifdef PC98
 	pc98_fd_check_ready(fd);
 #endif	
+
 
 	switch (cmd) {
 	case FD_GTYPE:                  /* get drive type */
@@ -2037,8 +2101,13 @@ fdc_attach(device_t dev)
 	if (!(fdc->flags & FDC_NODMA)) {
 		error = isa_dma_acquire(fdc->dmachan);
 		if (!error) {
+#ifdef PC98
+			error = isa_dma_init(fdc->dmachan,
+			    MAX_BYTES_PER_CYL, M_WAITOK|0x8000);
+#else
 			error = isa_dma_init(fdc->dmachan,
 			    MAX_BYTES_PER_CYL, M_WAITOK);
+#endif
 			if (error)
 				isa_dma_release(fdc->dmachan);
 		}

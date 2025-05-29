@@ -27,7 +27,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__FBSDID("$FreeBSD: releng/11.4/sys/dev/fdc/fdc_cbus.c 298426 2016-04-21 18:37:36Z jhb $");
 
 #include <sys/param.h>
 #include <sys/bio.h>
@@ -117,6 +117,11 @@ fdc_cbus_alloc_resources(device_t dev, struct fdc_data *fdc)
 	return (0);
 }
 
+static struct isa_pnp_id fdcpc98_ids[] = {
+	{ 0x0007d041, "Floppy Controller" },
+	{ 0 }
+};
+
 static int
 fdc_cbus_probe(device_t dev)
 {
@@ -126,8 +131,10 @@ fdc_cbus_probe(device_t dev)
 	fdc = device_get_softc(dev);
 
 	/* Check pnp ids */
-	if (isa_get_vendorid(dev))
-		return (ENXIO);
+//	if (isa_get_vendorid(dev))
+//		return (ENXIO);
+	if (ISA_PNP_PROBE(device_get_parent(dev), dev, fdcpc98_ids) == ENXIO)
+		return ENXIO;
 
 	/* Attempt to allocate our resources for the duration of the probe */
 	error = fdc_cbus_alloc_resources(dev, fdc);
