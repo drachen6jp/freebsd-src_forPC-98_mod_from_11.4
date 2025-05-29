@@ -53,7 +53,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__FBSDID("$FreeBSD: releng/11.4/sys/dev/exca/exca.c 331722 2018-03-29 02:50:57Z eadler $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -77,6 +77,8 @@ __FBSDID("$FreeBSD$");
 
 #include <dev/exca/excareg.h>
 #include <dev/exca/excavar.h>
+
+//#define EXCA_DEBUG
 
 #ifdef EXCA_DEBUG
 #define DEVPRINTF(dev, fmt, args...)	device_printf((dev), (fmt), ## args)
@@ -182,6 +184,8 @@ exca_do_mem_map(struct exca_softc *sc, int win)
 	uint32_t mem16;
 	uint32_t attrmem;
 	
+	uint32_t memwait;
+
 	map = &mem_map_index[win];
 	mem = &sc->mem[win];
 	mem16 = (mem->kind & PCCARD_MEM_16BIT) ? 
@@ -190,6 +194,27 @@ exca_do_mem_map(struct exca_softc *sc, int win)
 	    EXCA_CARDMEM_ADDRX_MSB_REGACTIVE_ATTR : 0;
 	offset = ((mem->cardaddr >> EXCA_CARDMEM_ADDRX_SHIFT) -
 	  (mem->addr >> EXCA_SYSMEM_ADDRX_SHIFT)) & 0x3fff;
+
+	if(attrmem == 0)
+		mem16 = EXCA_SYSMEM_ADDRX_START_MSB_DATASIZE_16BIT;//common memory often used for 16bit transfer
+
+	memwait = mem->kind & EXCA_SYSMEM_ADDRX_STOP_MSB_WAIT3;
+
+
+/*
+	printf("kind %x\n",mem->kind);
+	printf("win %x register0 %x\n",win,map->sysmem_start_lsb);
+	printf("register1 %x\n",map->sysmem_start_msb);
+	printf("register2 %x\n",map->sysmem_stop_lsb);
+	printf("register3 %x\n",map->sysmem_stop_msb);
+	printf("register4 %x\n",map->sysmem_win);
+
+	printf("addr %x\n",mem->addr);
+	printf("card register0 %x\n",map->cardmem_lsb);
+	printf("card register1 %x\n",map->cardmem_msb);
+	printf("offset %x\n",mem->cardaddr);
+	printf("mapenable %x\n",map->memenable);
+*/
 	exca_putb(sc, map->sysmem_start_lsb,
 	    mem->addr >> EXCA_SYSMEM_ADDRX_SHIFT);
 	exca_putb(sc, map->sysmem_start_msb,
@@ -198,11 +223,23 @@ exca_do_mem_map(struct exca_softc *sc, int win)
 
 	exca_putb(sc, map->sysmem_stop_lsb,
 	    (mem->addr + mem->realsize - 1) >> EXCA_SYSMEM_ADDRX_SHIFT);
+//	exca_putb(sc, map->sysmem_stop_msb,
+//	    (((mem->addr + mem->realsize - 1) >>
+//	    (EXCA_SYSMEM_ADDRX_SHIFT + 8)) &
+//	    EXCA_SYSMEM_ADDRX_STOP_MSB_ADDR_MASK) |
+//	    EXCA_SYSMEM_ADDRX_STOP_MSB_WAIT2);
+
 	exca_putb(sc, map->sysmem_stop_msb,
 	    (((mem->addr + mem->realsize - 1) >>
 	    (EXCA_SYSMEM_ADDRX_SHIFT + 8)) &
 	    EXCA_SYSMEM_ADDRX_STOP_MSB_ADDR_MASK) |
-	    EXCA_SYSMEM_ADDRX_STOP_MSB_WAIT2);
+	    memwait);
+	if((sc->getb == exca_mem_getb) && (sc->offset == 0x800)){//cardbus can use over 16M
+//		printf("mem window addr over 16M at %x for cardbus\n",mem->addr);
+		exca_putb(sc, 0x40+win,
+		mem->addr >> 24);//over 16M settings
+	}
+
 	exca_putb(sc, map->sysmem_win, mem->addr >> EXCA_MEMREG_WIN_SHIFT);
 
 	exca_putb(sc, map->cardmem_lsb, offset & 0xff);
@@ -211,11 +248,13 @@ exca_do_mem_map(struct exca_softc *sc, int win)
 
 	DPRINTF("%s %d-bit memory",
 	    mem->kind & PCCARD_MEM_ATTR ? "attribute" : "common",
-	    mem->kind & PCCARD_MEM_16BIT ? 16 : 8);
+//	    mem->kind & PCCARD_MEM_16BIT ? 16 : 8);
+	    mem16 & EXCA_SYSMEM_ADDRX_START_MSB_DATASIZE_16BIT ? 16 : 8);
 	exca_setb(sc, EXCA_ADDRWIN_ENABLE, map->memenable |
 	    EXCA_ADDRWIN_ENABLE_MEMCS16);
-
 	DELAY(100);
+//printf("mem mapping %04x enable %x\n",mem->addr,exca_getb(sc, EXCA_ADDRWIN_ENABLE));
+
 #ifdef EXCA_DEBUG
 	{
 		int r1, r2, r3, r4, r5, r6, r7;
@@ -283,8 +322,8 @@ exca_mem_map(struct exca_softc *sc, int kind, struct resource *res)
 	sc->mem[win].kind = kind;
 	DPRINTF("exca_mem_map window %d bus %x+%x card addr %x\n",
 	    win, sc->mem[win].addr, sc->mem[win].size, sc->mem[win].cardaddr);
-	exca_do_mem_map(sc, win);
 
+	exca_do_mem_map(sc, win);
 	return (0);
 }
 
@@ -304,6 +343,8 @@ exca_mem_unmap(struct exca_softc *sc, int window)
 
 	exca_clrb(sc, EXCA_ADDRWIN_ENABLE, mem_map_index[window].memenable);
 	sc->memalloc &= ~(1 << window);
+//printf("memory unmapping %x\n",exca_getb(sc, EXCA_ADDRWIN_ENABLE));
+
 }
 
 /*
@@ -362,6 +403,10 @@ exca_mem_set_flags(struct exca_softc *sc, struct resource *res, uint32_t flags)
 	case PCCARD_A_MEM_8BIT:
 		sc->mem[win].kind &= ~PCCARD_MEM_16BIT;
 		break;
+	case EXCA_SYSMEM_ADDRX_STOP_MSB_WAIT3:
+		sc->mem[win].kind |= EXCA_SYSMEM_ADDRX_STOP_MSB_WAIT3;
+	case 0x20:
+		sc->mem[win].kind |= 0x20;
 	}
 	exca_do_mem_map(sc, win);
 	return (0);
@@ -459,6 +504,7 @@ exca_do_io_map(struct exca_softc *sc, int win)
 
 	map = &io_map_index[win];
 	io = &sc->io[win];
+
 	exca_putb(sc, map->start_lsb, io->addr & 0xff);
 	exca_putb(sc, map->start_msb, (io->addr >> 8) & 0xff);
 
@@ -468,7 +514,12 @@ exca_do_io_map(struct exca_softc *sc, int win)
 	exca_clrb(sc, EXCA_IOCTL, map->ioctlmask);
 	exca_setb(sc, EXCA_IOCTL, map->ioctlbits[io->width]);
 
+	exca_setb(sc, EXCA_IOCTL, EXCA_IOCTL_IO0_WAITSTATE|EXCA_IOCTL_IO0_ZEROWAIT);
+
 	exca_setb(sc, EXCA_ADDRWIN_ENABLE, map->ioenable);
+//printf("mappingmask %x\n",map->ioctlmask);
+//printf("iomapping %04x width %x enable %x\n",io->addr,exca_getb(sc, EXCA_IOCTL),exca_getb(sc, EXCA_ADDRWIN_ENABLE));
+
 #ifdef EXCA_DEBUG
 	{
 		int r1, r2, r3, r4;
@@ -498,6 +549,10 @@ exca_io_map(struct exca_softc *sc, int width, struct resource *r)
 	}
 	if (win >= EXCA_IO_WINS)
 		return (ENOSPC);
+
+
+	if(sc->mem[win].kind & 0x20)//caution
+		width = 2;//16bit
 
 	sc->io[win].iot = rman_get_bustag(r);
 	sc->io[win].ioh = rman_get_bushandle(r);
@@ -529,6 +584,8 @@ exca_io_unmap(struct exca_softc *sc, int window)
 	sc->io[window].size = 0;
 	sc->io[window].flags = 0;
 	sc->io[window].width = 0;
+
+//printf("iounmapping win %x width %x enable %x\n",window,exca_getb(sc, EXCA_IOCTL),exca_getb(sc, EXCA_ADDRWIN_ENABLE));
 }
 
 static int
@@ -573,6 +630,7 @@ exca_wait_ready(struct exca_softc *sc)
 	int i;
 	DEVPRINTF(sc->dev, "exca_wait_ready: status 0x%02x\n",
 	    exca_getb(sc, EXCA_IF_STATUS));
+
 	for (i = 0; i < 10000; i++) {
 		if (exca_getb(sc, EXCA_IF_STATUS) & EXCA_IF_STATUS_READY)
 			return;
@@ -600,6 +658,9 @@ exca_reset(struct exca_softc *sc, device_t child)
 {
 	int win;
 
+	int intnum;
+	intnum = exca_getb(sc, EXCA_INTR);
+
 	/* enable socket i/o */
 	exca_setb(sc, EXCA_PWRCTL, EXCA_PWRCTL_OE);
 
@@ -626,6 +687,11 @@ exca_reset(struct exca_softc *sc, device_t child)
 	for (win = 0; win < EXCA_IO_WINS; ++win)
 		if (sc->ioalloc & (1 << win))
 			exca_do_io_map(sc, win);
+ if(sc->chipset != EXCA_CARDBUS){
+	exca_setb(sc, EXCA_INTR, intnum);
+	intnum = exca_getb(sc, EXCA_INTR);
+//	printf("exca reset EXCA_INTR %x\n",intnum);
+ }
 }
 
 /*
@@ -644,6 +710,21 @@ exca_init(struct exca_softc *sc, device_t dev,
 	sc->flags = 0;
 	sc->getb = exca_mem_getb;
 	sc->putb = exca_mem_putb;
+}
+
+static void
+exca_init_io(struct exca_softc *sc, device_t dev, 
+    bus_space_tag_t bst, bus_space_handle_t bsh, uint32_t offset)
+{
+	sc->dev = dev;
+	sc->memalloc = 0;
+	sc->ioalloc = 0;
+	sc->bst = bst;
+	sc->bsh = bsh;
+	sc->offset = offset;
+	sc->flags = 0;
+	sc->getb = exca_io_getb;
+	sc->putb = exca_io_putb;
 }
 
 /*
@@ -772,7 +853,7 @@ exca_probe_slots(device_t dev, struct exca_softc *exca, bus_space_tag_t iot,
 
 	err = ENXIO;
 	for (i = 0; i < EXCA_NSLOTS; i++)  {
-		exca_init(&exca[i], dev, iot, ioh, i * EXCA_SOCKET_SIZE);
+		exca_init_io(&exca[i], dev, iot, ioh, i * EXCA_SOCKET_SIZE);
 		exca->getb = exca_io_getb;
 		exca->putb = exca_io_putb;
 		if (exca_valid_slot(&exca[i])) {
@@ -821,6 +902,7 @@ exca_activate_resource(struct exca_softc *exca, device_t child, int type,
 		err = exca_io_map(exca, PCCARD_WIDTH_AUTO, res);
 		break;
 	case SYS_RES_MEMORY:
+//		printf("memory %d allocate %llx\n",rid,rman_get_start(res));
 		err = exca_mem_map(exca, 0, res);
 		break;
 	}
