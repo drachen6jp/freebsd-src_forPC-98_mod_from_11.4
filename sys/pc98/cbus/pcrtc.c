@@ -26,7 +26,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__FBSDID("$FreeBSD: releng/11.4/sys/pc98/cbus/pcrtc.c 178315 2008-04-19 08:18:47Z nyan $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -126,22 +126,43 @@ struct pcrtc_softc {
  * Attach to the ISA PnP descriptors for the timer and realtime clock.
  */
 static struct isa_pnp_id pcrtc_ids[] = {
-	{ 0x000bd041 /* PNP0B00 */, "AT realtime clock" },
+	{ 0x000bd041 /* PNP0B00 */, "AT realtime clock(PC-98)" },
 	{ 0 }
 };
+
+static void
+pcrtc_identify(driver_t *driver, device_t parent)
+{
+	BUS_ADD_CHILD(parent, ISA_ORDER_SPECULATIVE, "pcrtc", 0);
+}
 
 static int
 pcrtc_probe(device_t dev)
 {
 	int result;
+	struct pcrtc_softc *sc;
 
-	device_set_desc(dev, "PC Real Time Clock");
+	result = ISA_PNP_PROBE(device_get_parent(dev), dev, pcrtc_ids);
+	if(result == ENOENT){
+		sc = device_get_softc(dev);
+		sc->port_rid1 = 0;
+		bus_set_resource(dev, SYS_RES_IOPORT, sc->port_rid1, IO_RTC, 1);
+		if (!(sc->port_res1 = bus_alloc_resource(dev, SYS_RES_IOPORT,
+	    	&sc->port_rid1, IO_RTC, IO_RTC, 1, RF_ACTIVE)))
+			return ENXIO;
+		bus_release_resource(dev, SYS_RES_IOPORT, sc->port_rid1, sc->port_res1);
+		device_set_desc(dev, "PC Real Time Clock no-PNP");
+		return (BUS_PROBE_LOW_PRIORITY);
+	}
+	return(result);
+#if 0	
 	result = ISA_PNP_PROBE(device_get_parent(dev), dev, pcrtc_ids);
 	/* ENXIO if wrong PnP-ID, ENOENT ifno PnP-ID, zero if good PnP-iD */
 	if (result != ENOENT)
 		return(result);
 	/* All PC's have an RTC, and we're hosed without it, so... */
 	return (BUS_PROBE_LOW_PRIORITY);
+#endif
 }
 
 static int
@@ -222,6 +243,7 @@ pcrtc_gettime(device_t dev, struct timespec *ts)
 
 static device_method_t pcrtc_methods[] = {
 	/* Device interface */
+	DEVMETHOD(device_identify,	pcrtc_identify),
 	DEVMETHOD(device_probe,		pcrtc_probe),
 	DEVMETHOD(device_attach,	pcrtc_attach),
 	DEVMETHOD(device_detach,	bus_generic_detach),
