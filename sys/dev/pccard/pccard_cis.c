@@ -1,5 +1,5 @@
 /* $NetBSD: pcmcia_cis.c,v 1.17 2000/02/10 09:01:52 chopps Exp $ */
-/* $FreeBSD$ */
+/* $FreeBSD: releng/11.4/sys/dev/pccard/pccard_cis.c 331722 2018-03-29 02:50:57Z eadler $ */
 
 /*-
  * Copyright (c) 1997 Marc Horowitz.  All rights reserved.
@@ -1157,6 +1157,7 @@ pccard_parse_cis_tuple(const struct pccard_tuple *tuple, void *arg)
 					cfe->num_memspace = 1;
 					cfe->memspace[0].length = 256 *
 					    pccard_tuple_read_2(tuple, idx);
+					cfe->memspace[0].length &= 0xffff;//under 64kB size
 					idx += 2;
 					cfe->memspace[0].cardaddr = 0;
 					cfe->memspace[0].hostaddr = 0;
@@ -1165,6 +1166,7 @@ pccard_parse_cis_tuple(const struct pccard_tuple *tuple, void *arg)
 					cfe->num_memspace = 1;
 					cfe->memspace[0].length = 256 *
 					    pccard_tuple_read_2(tuple, idx);
+					cfe->memspace[0].length &= 0xffff;//under 64kB size
 					idx += 2;
 					cfe->memspace[0].cardaddr = 256 *
 					    pccard_tuple_read_2(tuple, idx);
@@ -1205,6 +1207,7 @@ pccard_parse_cis_tuple(const struct pccard_tuple *tuple, void *arg)
 							cfe->memspace[i].length =
 								256 * pccard_tuple_read_n(tuple, lengthsize,
 								       idx);
+							cfe->memspace[i].length &= 0xffff;//under 64kB size
 							idx += lengthsize;
 						} else {
 							cfe->memspace[i].length = 0;

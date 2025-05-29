@@ -30,7 +30,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__FBSDID("$FreeBSD: releng/11.4/sys/dev/pccard/pccard.c 331722 2018-03-29 02:50:57Z eadler $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -135,6 +135,8 @@ pccard_do_product_lookup(device_t bus, device_t dev,
 static int
 pccard_ccr_read(struct pccard_function *pf, int ccr)
 {
+//	printf("addr %llx+%x+%x %x\n",rman_get_start(pf->ccr_res), pf->pf_ccr_offset, ccr, bus_space_read_1(pf->pf_ccrt, pf->pf_ccrh,
+//	    pf->pf_ccr_offset + ccr));
 	return (bus_space_read_1(pf->pf_ccrt, pf->pf_ccrh,
 	    pf->pf_ccr_offset + ccr));
 }
@@ -143,6 +145,7 @@ static void
 pccard_ccr_write(struct pccard_function *pf, int ccr, int val)
 {
 	if ((pf->ccr_mask) & (1 << (ccr / 2))) {
+//	printf("ccr addr %llx+%x+%x wrote %x\n",rman_get_start(pf->ccr_res), pf->pf_ccr_offset, ccr, val);
 		bus_space_write_1(pf->pf_ccrt, pf->pf_ccrh,
 		    pf->pf_ccr_offset + ccr, val);
 	}
@@ -292,6 +295,7 @@ pccard_probe_and_attach_child(device_t dev, device_t child,
 	pccard_function_init(pf, -1);
 	if (sc->sc_enabled_count == 0)
 		POWER_ENABLE_SOCKET(device_get_parent(dev), dev);
+
 	if (pccard_function_enable(pf) == 0 &&
 	    pccard_set_default_descr(child) == 0 &&
 	    device_attach(child) == 0) {
@@ -303,8 +307,22 @@ pccard_probe_and_attach_child(device_t dev, device_t child,
 		    pccard_ccr_read(pf, 0x06), pccard_ccr_read(pf, 0x0A),
 		    pccard_ccr_read(pf, 0x0C), pccard_ccr_read(pf, 0x0E),
 		    pccard_ccr_read(pf, 0x10), pccard_ccr_read(pf, 0x12)));
+		DEVPRINTF((sc->dev, " memory window at %x iobase %x",pf->pf_ccr_window,pf->ccr_base ));
+
+		if(pf->cfe->flags & PCCARD_CFE_MWAIT_REQUIRED){
+			CARD_SET_RES_FLAGS(device_get_parent(dev), dev, SYS_RES_MEMORY,
+		    		pf->ccr_rid, 0xc0);
+		}
+
+		if(pf->cfe->flags & PCCARD_CFE_IO16){
+			CARD_SET_RES_FLAGS(device_get_parent(dev), dev, SYS_RES_MEMORY,//honto ha IO dakeredomo
+		    		pf->ccr_rid, 0x20);
+		}
+
+
 		return (0);
 	}
+
 	error = ENXIO;
 out:;
 	/*
@@ -513,6 +531,7 @@ pccard_function_init(struct pccard_function *pf, int entry)
 			len = ios->length;
 			r = bus_alloc_resource(bus, SYS_RES_IOPORT, &rid,
 			    start, end, len, rman_make_alignment_flags(len));
+
 			if (r == NULL) {
 				DEVPRINTF((bus, "I/O rid %d failed\n", i));
 				goto not_this_one;
@@ -540,7 +559,7 @@ pccard_function_init(struct pccard_function *pf, int entry)
 			    start, end, len, rman_make_alignment_flags(len));
 			if (r == NULL) {
 				DEVPRINTF((bus, "Memory rid %d failed\n", i));
-//				goto not_this_one;
+				goto not_this_one;
 				continue;
 			}
 			rle = resource_list_add(rl, SYS_RES_MEMORY,
@@ -558,6 +577,22 @@ pccard_function_init(struct pccard_function *pf, int entry)
 			rid = 0;
 			r = bus_alloc_resource_any(bus, SYS_RES_IRQ, &rid,
 			    RF_SHAREABLE);
+#if 0
+		if(r == NULL){
+			r = bus_alloc_resource_any(bus, SYS_RES_IRQ, &rid,
+			    RF_ACTIVE);
+			if (r == NULL) {
+				for (i = 0; i < 16 && r == NULL; i++) {
+					if (((1 << i) & cfe->irqmask) == 0)
+						continue;
+					printf("pccard irq %x check\n",i);
+					r = bus_alloc_resource(bus, SYS_RES_IRQ, &rid, i, i,
+				  		  1, RF_ACTIVE);
+					if(r != NULL)printf("pccard irq %x ok?\n",i);
+				}
+			}
+		}
+#endif
 			if (r == NULL) {
 				DEVPRINTF((bus, "IRQ rid %d failed\n", rid));
 				goto not_this_one;
@@ -679,7 +714,6 @@ pccard_function_enable(struct pccard_function *pf)
 			pf->pf_ccrt = tmp->pf_ccrt;
 			pf->pf_ccrh = tmp->pf_ccrh;
 			pf->pf_ccr_realsize = tmp->pf_ccr_realsize;
-
 			/*
 			 * pf->pf_ccr_offset = (tmp->pf_ccr_offset -
 			 * tmp->ccr_base) + pf->ccr_base;
@@ -747,6 +781,7 @@ pccard_function_enable(struct pccard_function *pf)
 			    pccard_ccr_read(tmp, 0x0E),
 			    pccard_ccr_read(tmp, 0x10),
 			    pccard_ccr_read(tmp, 0x12));
+			DEVPRINTF((dev, "memory window at %x iobase %x",pf->pf_ccr_window,pf->ccr_base ));
 		}
 	}
 #endif
