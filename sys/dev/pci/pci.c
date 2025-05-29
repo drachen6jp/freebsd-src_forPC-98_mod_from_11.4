@@ -27,7 +27,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__FBSDID("$FreeBSD: releng/11.4/sys/dev/pci/pci.c 355359 2019-12-03 22:01:45Z jhb $");
 
 #include "opt_bus.h"
 
@@ -332,6 +332,10 @@ static int pcie_chipset, pcix_chipset;
 
 /* sysctl vars */
 SYSCTL_NODE(_hw, OID_AUTO, pci, CTLFLAG_RD, 0, "PCI bus tuning parameters");
+
+//int pciirq =3;
+//SYSCTL_INT(_hw_pci, OID_AUTO, pciirq, CTLFLAG_RWTUN, &pciirq, 0,
+//    "PCI-CBUS bridge has PCI-INTLINE settings. some PC-CARDS need this setting.");
 
 static int pci_enable_io_modes = 1;
 SYSCTL_INT(_hw_pci, OID_AUTO, enable_io_modes, CTLFLAG_RWTUN,
@@ -5996,6 +6000,7 @@ pci_cfg_save(device_t dev, struct pci_devinfo *dinfo, int setstate)
 	dinfo->cfg.device = pci_read_config(dev, PCIR_DEVICE, 2);
 	dinfo->cfg.cmdreg = pci_read_config(dev, PCIR_COMMAND, 2);
 	dinfo->cfg.intline = pci_read_config(dev, PCIR_INTLINE, 1);
+		if(dinfo->cfg.intline == 0xff)dinfo->cfg.intline = 0x3;//sorry force to 3
 	dinfo->cfg.intpin = pci_read_config(dev, PCIR_INTPIN, 1);
 	dinfo->cfg.cachelnsz = pci_read_config(dev, PCIR_CACHELNSZ, 1);
 	dinfo->cfg.lattimer = pci_read_config(dev, PCIR_LATTIMER, 1);
@@ -6035,6 +6040,10 @@ pci_cfg_save(device_t dev, struct pci_devinfo *dinfo, int setstate)
 		    PCIR_BRIDGECTL_2, 2);
 		dinfo->cfg.subvendor = pci_read_config(dev, PCIR_SUBVEND_2, 2);
 		dinfo->cfg.subdevice = pci_read_config(dev, PCIR_SUBDEV_2, 2);
+		if(dinfo->cfg.intline == 0xff){
+			pci_write_config(dev, PCIR_INTLINE, 1, 3);
+			dinfo->cfg.intline = 3;
+		}
 		break;
 	}
 
