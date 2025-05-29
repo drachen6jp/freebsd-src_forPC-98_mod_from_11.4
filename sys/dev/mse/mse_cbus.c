@@ -23,7 +23,7 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- * $FreeBSD$
+ * $FreeBSD: releng/11.4/sys/dev/mse/mse_cbus.c 272956 2014-10-11 19:36:59Z jhb $
  */
 
 /*-
@@ -108,7 +108,7 @@ static	driver_t	mse_driver = {
 DRIVER_MODULE(mse, isa, mse_driver, mse_devclass, 0, 0);
 
 static struct isa_pnp_id mse_ids[] = {
-#if 0
+#if 1
 	{ 0x001fa3b8, "PC-98 bus mouse" },		/* NEC1F00 */
 #endif
 	{ 0 }
