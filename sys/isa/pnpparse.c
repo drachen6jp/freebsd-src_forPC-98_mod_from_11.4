@@ -25,7 +25,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__FBSDID("$FreeBSD: releng/11.4/sys/isa/pnpparse.c 299006 2016-05-03 21:51:52Z pfg $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -67,7 +67,6 @@ pnp_parse_desc(device_t dev, u_char tag, u_char *res, int len,
 	int temp;
 
 	id = isa_get_logicalid(dev);
-
 	if (PNP_RES_TYPE(tag) == 0) {
 
 		/* Small resource */
@@ -102,6 +101,7 @@ pnp_parse_desc(device_t dev, u_char tag, u_char *res, int len,
 				pnp_printf(id, "too many irqs\n");
 				return (1);
 			}
+
 			if (I16(res) == 0) {
 				/* a null descriptor */
 				config->ic_irqmask[config->ic_nirq] = 0;
@@ -112,6 +112,13 @@ pnp_parse_desc(device_t dev, u_char tag, u_char *res, int len,
 				pnp_printf(id, "adding irq mask %#02x\n",
 					   I16(res));
 			config->ic_irqmask[config->ic_nirq] = I16(res);
+			if( (id == 0x6581a3b8 || id == 0x6781a3b8) || ( (config->ic_nirq == 1) && (id == 0x6681a3b8 || id == 0x6881a3b8)) ) {
+//				pnp_printf(id,"118 Board PCM cannot use IRQ6\n");
+				config->ic_irqmask[config->ic_nirq] &= ~(1<<6); 
+				if (bootverbose)
+					pnp_printf(id, "adding irq mask modified%#02x\n",
+						   config->ic_irqmask[config->ic_nirq]);
+			}
 			config->ic_nirq++;
 			break;
 
@@ -157,6 +164,10 @@ pnp_parse_desc(device_t dev, u_char tag, u_char *res, int len,
 			}
 			config->ic_port[config->ic_nport].ir_start =
 			    I16(res + 1);
+
+			if (config->ic_port[config->ic_nport].ir_start == 0)
+		 	  config->ic_port[config->ic_nport].ir_start = 0xf00;
+
 			config->ic_port[config->ic_nport].ir_end =
 			    I16(res + 3) + res[6] - 1;
 			config->ic_port[config->ic_nport].ir_size = res[6];

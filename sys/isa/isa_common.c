@@ -58,7 +58,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__FBSDID("$FreeBSD: releng/11.4/sys/isa/isa_common.c 297199 2016-03-22 22:25:08Z jhibbits $");
 
 #include "opt_isa.h"
 
@@ -530,7 +530,6 @@ isa_probe_children(device_t dev)
 	}
 
 	free(cfg, M_TEMP);
-
 	/*
 	 * Next, probe all the PnP BIOS devices so they can subsume any
 	 * hints.
@@ -589,7 +588,6 @@ isa_probe_children(device_t dev)
 	}
 
 	free(children, M_TEMP);
-
 	isa_running = 1;
 }
 

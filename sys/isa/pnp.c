@@ -27,7 +27,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__FBSDID("$FreeBSD: releng/11.4/sys/isa/pnp.c 299006 2016-05-03 21:51:52Z pfg $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -187,9 +187,8 @@ pnp_get_serial(pnp_id *p)
 			  (((sum ^ (sum >> 1) ^ bit) << 7) & 0xff);
 		data[i / 8] = (data[i / 8] >> 1) | (bit ? 0x80 : 0);
 	}
-
-	valid = valid && (data[8] == sum);
-
+// no sumcheck
+//	valid = valid && (data[8] == sum);
 	return (valid);
 }
 
@@ -235,6 +234,7 @@ pnp_set_config(void *arg, struct isa_config *config, int enable)
 	int ldn = ((struct pnp_set_config_arg *) arg)->ldn;
 	int i;
 
+if(1)		config->ic_irqmask[6] =  -1;
 	/*
 	 * First put all cards into Sleep state with the initiation
 	 * key, then put our card into Config state.
@@ -709,7 +709,6 @@ pnp_isolation_protocol(device_t parent)
 		 */
 		outb(_PNP_ADDRESS, PNP_SERIAL_ISOLATION);
 		DELAY(1000);	/* Delay 1 msec */
-
 		if (pnp_get_serial(&id)) {
 			/*
 			 * We have read the id from a card
@@ -796,7 +795,8 @@ pnp_identify(driver_t *driver, device_t parent)
 	int num_pnp_devs;
 
 	/* Try various READ_DATA ports from 0x203-0x3ff */
-	for (pnp_rd_port = 0x80; (pnp_rd_port < 0xff); pnp_rd_port += 0x10) {
+//	for (pnp_rd_port = 0x80; (pnp_rd_port < 0xff); pnp_rd_port += 0x10) {
+	for (pnp_rd_port = 0x80; (pnp_rd_port < 0xff); pnp_rd_port += 0x4) {
 		if (bootverbose)
 			printf("pnp_identify: Trying Read_Port at %x\n",
 			    (pnp_rd_port << 2) | 0x3);

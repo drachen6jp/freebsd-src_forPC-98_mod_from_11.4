@@ -23,7 +23,7 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- * $FreeBSD$
+ * $FreeBSD: releng/11.4/sys/isa/isavar.h 185059 2008-11-18 21:01:54Z jhb $
  */
 
 #ifndef _ISA_ISAVAR_H_
@@ -168,6 +168,8 @@ extern void	isa_probe_children(device_t dev);
 void	isa_dmacascade(int chan);
 void	isa_dmadone(int flags, caddr_t addr, int nbytes, int chan);
 int	isa_dma_init(int chan, u_int bouncebufsize, int flag);
+int	isa_dma_init16(int chan, u_int bouncebufsize, int flag);
+void	isa_dmabankselect(caddr_t addr, int chan);
 void	isa_dmastart(int flags, caddr_t addr, u_int nbytes, int chan);
 int	isa_dma_acquire(int chan);
 void	isa_dma_release(int chan);
