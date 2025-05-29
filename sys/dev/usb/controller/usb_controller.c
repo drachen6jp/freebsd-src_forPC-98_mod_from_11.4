@@ -1,4 +1,4 @@
-/* $FreeBSD$ */
+/* $FreeBSD: releng/11.4/sys/dev/usb/controller/usb_controller.c 331722 2018-03-29 02:50:57Z eadler $ */
 /*-
  * Copyright (c) 2008 Hans Petter Selasky. All rights reserved.
  *
@@ -713,8 +713,10 @@ usb_bus_attach(struct usb_proc_msg *pm)
 
 	switch (bus->usbrev) {
 	case USB_REV_1_0:
-		speed = USB_SPEED_FULL;
-		device_printf(bus->bdev, "12Mbps Full Speed USB v1.0\n");
+//		speed = USB_SPEED_FULL;
+		speed = USB_SPEED_LOW;
+//		device_printf(bus->bdev, "12Mbps Full Speed USB v1.0\n");
+		device_printf(bus->bdev, "1.5Mbps Low Speed USB v1.0\n");
 		break;
 
 	case USB_REV_1_1:
