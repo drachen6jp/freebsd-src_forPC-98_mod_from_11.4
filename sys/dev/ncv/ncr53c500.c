@@ -37,7 +37,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__FBSDID("$FreeBSD: releng/11.4/sys/dev/ncv/ncr53c500.c 331722 2018-03-29 02:50:57Z eadler $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -203,13 +203,14 @@ ncvhw_check(struct resource *res, struct ncv_hw *hw)
 	u_int8_t stat;
 
 	ncvhw_select_register_0(res, hw);
+
 	bus_write_1(res, cr0_cmd, CMD_NOP | CMD_DMA);
 	if (bus_read_1(res, cr0_cmd) != (CMD_NOP | CMD_DMA))
 	{
 #ifdef	NCV_DEBUG
 		printf("ncv: cr0_cmd CMD_NOP|CMD_DMA failed\n");
 #endif	/* NCV_DEBUG */
-		return ENODEV;
+//		return ENODEV;
 	}
 
 	bus_write_1(res, cr0_cmd, CMD_NOP);
@@ -218,7 +219,7 @@ ncvhw_check(struct resource *res, struct ncv_hw *hw)
 #ifdef	NCV_DEBUG
 		printf("ncv: cr0_cmd CMD_NOP failed\n");
 #endif	/* NCV_DEBUG */
-		return ENODEV;
+//		return ENODEV;
 	}
 
 	/* hardware reset */

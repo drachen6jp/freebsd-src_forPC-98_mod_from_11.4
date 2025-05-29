@@ -37,7 +37,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__FBSDID("$FreeBSD: releng/11.4/sys/dev/ncv/ncr53c500_pccard.c 331722 2018-03-29 02:50:57Z eadler $");
 
 #include <sys/param.h>
 #include <sys/errno.h>
@@ -83,6 +83,7 @@ static const struct ncv_product {
 	{ PCMCIA_CARD(MACNICA, MPS100), 0xb6250000 },
 	{ PCMCIA_CARD(MACNICA, MPS110), 0 },
 	{ PCMCIA_CARD(NEC, PC9801N_J03R), 0 },
+	{ PCMCIA_CARD(NEC, PC9801N_J03), 0 },
 	{ PCMCIA_CARD(NEWMEDIA, BASICS_SCSI), 0 },
 	{ PCMCIA_CARD(QLOGIC, PC05), 0x84d00000 },
 #define FLAGS_REX5572 0x84d00000
