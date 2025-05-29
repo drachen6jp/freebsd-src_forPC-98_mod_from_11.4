@@ -40,7 +40,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__FBSDID("$FreeBSD: releng/11.4/sys/dev/nsp/nsp.c 331722 2018-03-29 02:50:57Z eadler $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -170,7 +170,8 @@ struct scsi_low_funcs nspfuncs = {
 	SC_LOW_ATTEN_T nsphw_attention,
 	SC_LOW_MSG_T nsp_msg,
 
-	SC_LOW_TIMEOUT_T nsp_timeout,
+//	SC_LOW_TIMEOUT_T nsp_timeout,
+	SC_LOW_TIMEOUT_T NULL,
 	SC_LOW_POLL_T nspintr,
 
 	NULL,
@@ -282,17 +283,26 @@ static void
 nsphw_bus_reset(sc)
 	struct nsp_softc *sc;
 {
-	int i;
-
+//	int i;
 	bus_write_1(sc->port_res, nsp_irqcr, IRQCR_ALLMASK);
 
 	nsp_cr_write_1(sc->port_res, NSPR_SCBUSCR, SCBUSCR_RST);
 	DELAY(100 * 1000);	/* 100ms */
 	nsp_cr_write_1(sc->port_res, NSPR_SCBUSCR, 0);
-	for (i = 0; i < 5; i ++)
-		(void) nsp_cr_read_1(sc->port_res, NSPR_IRQPHS);
+/*
+	printf("io port is %llx\n",rman_get_start(sc->port_res));
 
+	for (i = 0; i < 5; i ++){
+		(void) nsp_cr_read_1(sc->port_res, NSPR_IRQPHS);
+		printf("reset read %x %x %x\n",i,nsp_cr_read_1(sc->port_res, i),nsp_cr_read_1(sc->port_res, NSPR_IRQPHS));
+	}
+*/
 	bus_write_1(sc->port_res, nsp_irqcr, IRQSR_MASK);
+/*
+	for (i = 0; i<10; i++){
+		printf("nsp read io after reset %x %x\n",i,bus_read_1(sc->port_res, i));
+	}
+*/
 }
 
 static void
@@ -330,11 +340,13 @@ nsphw_start_selection(sc, cb)
 
 	/* check bus free */
 	ph = nsp_cr_read_1(sc->port_res, NSPR_SCBUSMON);
+//printf("nsphw start selection %x\n",ph);
 	if (ph != SCBUSMON_FREE)
 	{
 #ifdef	NSP_STATICS
 		nsp_statics.arbit_conflict_1 ++;
 #endif	/* NSP_STATICS */
+//		printf("nsphw start selection %x\n",ph);
 		return SCSI_LOW_START_FAIL;
 	}
 
@@ -356,9 +368,10 @@ nsphw_start_selection(sc, cb)
 #ifdef	NSP_STATICS
 		nsp_statics.arbit_conflict_2 ++;
 #endif	/* NSP_STATICS */
+//		printf("nsphw start selection failed %x\n",nsp_cr_read_1(sc->port_res, NSPR_ARBITS));
 		return SCSI_LOW_START_FAIL;
 	}
-
+//printf("nsphw start selection go on\n");
 	/* assert select line */
 	SCSI_LOW_SETUP_PHASE(ti, PH_SELSTART);
 	scsi_low_arbit_win(slp);
@@ -407,6 +420,7 @@ nsphw_start_selection(sc, cb)
 
 	/* check a selection timeout */
 	nsp_start_timer(sc, NSP_TIMER_1MS);
+//printf("nsp start timer\n");
 	sc->sc_seltout = 1;
 	return SCSI_LOW_START_OK;
 }
@@ -559,7 +573,7 @@ int
 nspprobesubr(struct resource *res, u_int dvcfg)
 {
 	u_int8_t regv;
-
+//	printf("nspprobesubr with ioport %llx\n",rman_get_start(res));
 	regv = bus_read_1(res, nsp_fifosr);
 	if (regv < 0x11 || regv >= 0x20)
 		return 0;
@@ -655,8 +669,11 @@ nsp_setup_fifo(sc, on, direction, datalen)
 	else
 	{
 		if (sc->mem_res != NULL &&
-		    (nsp_io_control & NSP_USE_MEMIO) != 0)
-			xfermode = XFERMR_XEN | XFERMR_MEM32;
+		    (nsp_io_control & NSP_USE_MEMIO) != 0){
+//			if((datalen & 1) == 0)
+			xfermode = XFERMR_XEN | XFERMR_MEM32;//16bit memory
+//			else 				xfermode = XFERMR_XEN | XFERMR_MEM8;// odd size
+		}
 		else
 			xfermode = XFERMR_XEN | XFERMR_IO32;
 
@@ -818,11 +835,19 @@ nsp_read_fifo(sc, suspendio)
 			res &= ~3;
 			bus_read_region_4(sc->mem_res, 0, 
 				(u_int32_t *) slp->sl_scp.scp_data, res >> 2);
+
+//			res &= ~1;
+//			bus_read_region_2(sc->mem_res, 0, 
+//				(u_int16_t *) slp->sl_scp.scp_data, res >> 1);
+
+//			printf("data get 2byte %x from memory %llx length %x\n",slp->sl_scp.scp_data[0],rman_get_start(sc->mem_res),res);
+//			printf("data get %x %x %x",slp->sl_scp.scp_data[1],slp->sl_scp.scp_data[2],slp->sl_scp.scp_data[3]);
 		}
 		else
 		{
 			bus_read_region_1(sc->mem_res, 0, 
 				(u_int8_t *) slp->sl_scp.scp_data, res);
+//			printf("data get 1byte %x from memory %llx+%x\n",slp->sl_scp.scp_data[sc->sc_cnt],rman_get_start(sc->mem_res),res);
 		}
 	}
 	else
@@ -897,6 +922,8 @@ nsp_write_fifo(sc, suspendio)
 		{
 			bus_write_region_4(sc->mem_res, 0,
 				(u_int32_t *) slp->sl_scp.scp_data, res >> 2);
+//			bus_write_region_2(sc->mem_res, 0,
+//				(u_int16_t *) slp->sl_scp.scp_data, res >> 1);
 		}
 		else
 		{
@@ -1463,6 +1490,7 @@ nspintr(arg)
 	/*******************************************
 	 * aribitration & selection
 	 *******************************************/
+//printf("nsp current phase %x data? %x\n",ti->ti_phase,irqphs);
 	switch (ti->ti_phase)
 	{
 	case PH_SELSTART:
@@ -1472,15 +1500,18 @@ nspintr(arg)
 			{
 				sc->sc_seltout = 0;
 				nsp_cr_write_1(sc->port_res, NSPR_SCBUSCR, 0);
+//printf("selection not done disconnected %x\n",ph);
 				return nsp_disconnected(sc, ti);
 			}
 			sc->sc_seltout ++;
 			nsp_start_timer(sc, NSP_TIMER_1MS);
+//printf("selection not done %x\n",ph);
 			return 1;
 		}
 
 		SCSI_LOW_SETUP_PHASE(ti, PH_SELECTED);
 		nsphw_selection_done_and_expect_msgout(sc);
+//printf("selection done msgout %x\n",ph);
 		return 1;
 
 	case PH_SELECTED:

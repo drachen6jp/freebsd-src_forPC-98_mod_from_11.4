@@ -35,7 +35,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__FBSDID("$FreeBSD: releng/11.4/sys/dev/nsp/nsp_pccard.c 331722 2018-03-29 02:50:57Z eadler $");
 
 #include <sys/param.h>
 #include <sys/bus.h>
@@ -117,6 +117,8 @@ nsp_alloc_resource(device_t dev)
 	struct nsp_softc	*sc = device_get_softc(dev);
 	rman_res_t		ioaddr, iosize, maddr, msize;
 	int			error;
+//	struct resource	*tmp_mem_res;
+//	int			tmp_mem_rid;
 
 	error = bus_get_resource(dev, SYS_RES_IOPORT, 0, &ioaddr, &iosize);
 	if (error || iosize < NSP_IOSIZE)
@@ -140,29 +142,44 @@ nsp_alloc_resource(device_t dev)
 		return(ENOMEM);
 	}
 
+
+	if ((device_get_flags(dev) & PIO_MODE) == PIO_MODE){
+		return(0);
+	}
+
 	error = bus_get_resource(dev, SYS_RES_MEMORY, 0, &maddr, &msize);
+//	printf("nsp real allocate memory for CIS at maddr = %llx %x\n",maddr,error);
 	if (error)
 		return(0);	/* XXX */
-
+#if 1
 	/* No need to allocate memory if not configured and it's in PIO mode */
+
 	if (maddr == 0 || msize == 0) {
 		if ((device_get_flags(dev) & PIO_MODE) == 0) {
 			printf("Memory window was not configured. Configure or use in PIO mode.");
-			nsp_release_resource(dev);
-			return(ENOMEM);
+//			nsp_release_resource(dev);
+//			return(ENOMEM);
+			device_set_flags(dev, device_get_flags(dev)|PIO_MODE);
 		}
 		/* no need to allocate memory if PIO mode */
 		return(0);
 	}
-
+#endif
 	sc->mem_rid = 0;
 	sc->mem_res = bus_alloc_resource_any(dev, SYS_RES_MEMORY, &sc->mem_rid,
 					     RF_ACTIVE);
-	if (sc->mem_res == NULL) {
-		nsp_release_resource(dev);
-		return(ENOMEM);
+	if (sc->mem_res != NULL){
+//	 printf("nsp pccard allocate memorywindow at %llx\n",rman_get_start(sc->mem_res));
+//	 if(rman_get_start(sc->mem_res) >= 0x100000){//over 16M force to PIO mode?
+//		bus_release_resource(dev, SYS_RES_MEMORY,
+//				     sc->mem_rid, sc->mem_res);
+//	 }
 	}
-
+	if (sc->mem_res == NULL) {
+		printf("Memory window was not configured. Configure or use in PIO mode.");
+//		nsp_release_resource(dev);
+//		return(ENOMEM);
+	}
 	return(0);
 }
 
@@ -250,10 +267,13 @@ nspprobe(device_t devi)
 {
 	int rv;
 	struct nsp_softc *sc = device_get_softc(devi);
-
+/*
+	for (rv = 0; rv<10; rv++){
+		printf("nsp read io %x %x\n",rv,bus_read_1(sc->port_res, rv));
+	}
+*/
 	rv = nspprobesubr(sc->port_res,
 			  device_get_flags(devi));
-
 	return rv;
 }
 
