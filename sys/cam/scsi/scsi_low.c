@@ -2,7 +2,7 @@
 /*	$NetBSD$	*/
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__FBSDID("$FreeBSD: releng/11.4/sys/cam/scsi/scsi_low.c 315812 2017-03-23 06:40:20Z mav $");
 
 #define	SCSI_LOW_STATICS
 #define	SCSI_LOW_DEBUG
@@ -718,6 +718,9 @@ settings_out:
 		strlcpy(cpi->dev_name, cam_sim_name(sim), DEV_IDLEN);
 		cpi->unit_number = cam_sim_unit(sim);
 		cpi->ccb_h.status = CAM_REQ_CMP;
+
+		cpi->maxio = 0x8000;//safety for ct driver
+
 		xpt_done(ccb);
 		break;
 	}
@@ -803,8 +806,9 @@ scsi_low_ccb_setup_cam(slp, cb)
 		cb->ccb_scp.scp_cmdlen = (int) ccb->csio.cdb_len;
 		cb->ccb_scp.scp_data = ccb->csio.data_ptr;
 		cb->ccb_scp.scp_datalen = (int) ccb->csio.dxfer_len;
-		if((ccb->ccb_h.flags & CAM_DIR_MASK) == CAM_DIR_OUT)
+		if((ccb->ccb_h.flags & CAM_DIR_MASK) == CAM_DIR_OUT){
 			cb->ccb_scp.scp_direction = SCSI_LOW_WRITE;
+		}
 		else /* if((ccb->ccb_h.flags & CAM_DIR_MASK) == CAM_DIR_IN) */
 			cb->ccb_scp.scp_direction = SCSI_LOW_READ;
 		cb->ccb_tcmax = ccb->ccb_h.timeout / 1000;
@@ -1430,10 +1434,15 @@ scsi_low_attach(slp, openings, ntargs, nluns, targsize, lunsize)
 		return EINVAL;
 	}
 
+
+if (slp->sl_funcs->scsi_low_timeout != NULL){
 	/* start watch dog */
 	slp->sl_timeout_count = 0;
 	callout_reset(&slp->sl_timeout_timer, hz / SCSI_LOW_TIMEOUT_HZ,
 	    scsi_low_timeout, slp);
+//	Sorry I could'nt solve this problem
+}
+
 	mtx_lock(&sl_tab_lock);
 	LIST_INSERT_HEAD(&sl_tab, slp, sl_chain);
 	mtx_unlock(&sl_tab_lock);
@@ -1812,7 +1821,7 @@ scsi_low_cmd_start:
 #endif	/* SCSI_LOW_STATICS */
 		return;
 	}
-
+printf("scsi_low selection not ok %x\n",rv);
 	scsi_low_arbit_fail(slp, cb);
 #ifdef	SCSI_LOW_STATICS
 	scsi_low_statics.nexus_fail ++;
@@ -3950,6 +3959,7 @@ scsi_low_start_up(slp)
 
 	for (target = 0; target < slp->sl_ntargs; target ++)
 	{
+	device_printf(slp->sl_dev, "scsi_low: probing %d  device\n",target);
 		if (target == slp->sl_hostid)
 		{
 			if ((slp->sl_show_result & SHOW_PROBE_RES) != 0)
@@ -3970,9 +3980,11 @@ scsi_low_start_up(slp)
 		ti = slp->sl_ti[target];
 		for (lun = 0; lun < slp->sl_nluns; lun ++)
 		{
+		device_printf(slp->sl_dev, "scsi_low: probing LUN%d\n",lun);
 			if ((cb = SCSI_LOW_ALLOC_CCB(1)) == NULL)
 				break;
 
+		device_printf(slp->sl_dev, "scsi_low: probed LUN%d\n",lun);
 			cb->osdep = NULL;
 			cb->bp = NULL;
 

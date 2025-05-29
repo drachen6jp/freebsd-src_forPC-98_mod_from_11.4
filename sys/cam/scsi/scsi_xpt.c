@@ -28,7 +28,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__FBSDID("$FreeBSD: releng/11.4/sys/cam/scsi/scsi_xpt.c 351754 2019-09-03 16:24:44Z mav $");
 
 #include <sys/param.h>
 #include <sys/bus.h>
@@ -805,6 +805,11 @@ again:
 			inquiry_len = SHORT_INQUIRY_LENGTH;
 		else
 			inquiry_len = SID_ADDITIONAL_LENGTH(inq_buf);
+
+//		if(inquiry_len == 0xe0){
+//			printf("len =0xe0 but shorter\n");
+//			inquiry_len = 2;
+//		}
 
 		/*
 		 * Some parallel SCSI devices fail to send an

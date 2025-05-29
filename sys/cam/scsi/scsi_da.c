@@ -27,7 +27,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__FBSDID("$FreeBSD: releng/11.4/sys/cam/scsi/scsi_da.c 352773 2019-09-26 19:48:36Z mav $");
 
 #include <sys/param.h>
 
@@ -1732,7 +1732,6 @@ dadump(void *arg, void *virtual, vm_offset_t physical, off_t offset, size_t leng
 	 * Sync the disk cache contents to the physical media.
 	 */
 	if ((softc->quirks & DA_Q_NO_SYNC_CACHE) == 0) {
-
 		xpt_setup_ccb(&csio.ccb_h, periph->path, CAM_PRIORITY_NORMAL);
 		csio.ccb_h.ccb_state = DA_CCB_DUMP;
 		scsi_synchronize_cache(&csio,
@@ -2518,6 +2517,8 @@ daregister(struct cam_periph *periph, void *arg)
 		softc->quirks = ((struct da_quirk_entry *)match)->quirks;
 	else
 		softc->quirks = DA_Q_NONE;
+
+	softc->quirks |= DA_Q_NO_SYNC_CACHE;
 
 	/* Check if the SIM does not want 6 byte commands */
 	xpt_path_inq(&cpi, periph->path);
