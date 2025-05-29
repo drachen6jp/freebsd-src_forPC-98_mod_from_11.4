@@ -105,6 +105,7 @@ static sc_term_clear_t		scterm_clear;
 static sc_term_notify_t		scterm_notify;
 static sc_term_input_t		scterm_input;
 static sc_term_fkeystr_t	scterm_fkeystr;
+static sc_term_sync_t	scterm_sync;
 
 static sc_term_sw_t sc_term_sc = {
 	{ NULL, NULL },
@@ -123,6 +124,7 @@ static sc_term_sw_t sc_term_sc = {
 	scterm_notify,
 	scterm_input,
 	scterm_fkeystr,
+	scterm_sync,
 };
 
 SCTERM_MODULE(sc, sc_term_sc);
@@ -1189,10 +1191,16 @@ scterm_input(scr_stat *scp, int c, struct tty *tp)
 static const char *
 scterm_fkeystr(scr_stat *scp, int c)
 {
-
 	return (NULL);
 }
 
+
+static void
+scterm_sync(scr_stat *scp)
+{
+//do nothing
+	//やらなくてもカーソル位置は壊れない
+}
 /*
  * Calculate hardware attributes word using logical attributes mask and
  * hardware colors

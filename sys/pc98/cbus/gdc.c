@@ -25,7 +25,7 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
- * $FreeBSD$
+ * $FreeBSD: releng/11.4/sys/pc98/cbus/gdc.c 298352 2016-04-20 15:45:55Z pfg $
  */
 
 #include "opt_gdc.h"
@@ -42,6 +42,7 @@
 #include <sys/rman.h>
 #include <machine/resource.h>
 
+#include <sys/malloc.h>
 #include <sys/fbio.h>
 #include <sys/fcntl.h>
 
@@ -76,7 +77,7 @@ typedef struct gdc_softc {
 	video_adapter_t	*adp;
 	struct resource *res_tgdc, *res_ggdc;
 	struct resource *res_egc, *res_pegc, *res_grcg, *res_kcg;
-	struct resource *res_tmem, *res_gmem1, *res_gmem2;
+	struct resource *res_tmem, *res_gmem1, *res_gmem2, *res_gmem3;
 #ifdef FB_INSTALL_CDEV
 	genfb_softc_t gensc;
 #endif
@@ -122,6 +123,11 @@ gdc_identify(driver_t *driver, device_t parent)
 {
 	BUS_ADD_CHILD(parent, ISA_ORDER_SPECULATIVE, DRIVER_NAME, 0);
 }
+static struct isa_pnp_id gdc_ids[] = {
+	{ 0x0219a3b8, "NEC Grahic Controller" },	/* GDC */
+	{ 0x0218a3b8, "NEC Grahic Controller" },	/* GDC */
+	{ 0 }
+};
 
 static int
 gdcprobe(device_t dev)
@@ -129,8 +135,10 @@ gdcprobe(device_t dev)
 	int error;
 
 	/* Check isapnp ids */
-	if (isa_get_vendorid(dev))
-		return (ENXIO);
+//	if (isa_get_vendorid(dev))
+//		return (ENXIO);
+	if (ISA_PNP_PROBE(device_get_parent(dev), dev, gdc_ids) == ENXIO)
+		return ENXIO;
 
 	device_set_desc(dev, "Generic GDC");
 
@@ -181,6 +189,11 @@ gdc_attach(device_t dev)
 
 	return 0;
 }
+static int
+gdc_detach(device_t dev){
+ return 0;
+}
+
 
 static int
 gdc_probe_unit(int unit, gdc_softc_t *sc, int flags)
@@ -307,6 +320,16 @@ gdc_alloc_resource(device_t dev)
 		return (ENXIO);
 	}
 
+	rid = 3;
+	sc->res_gmem3 = bus_alloc_resource(dev, SYS_RES_MEMORY, &rid,
+					   0xfff00000, 0xfff7ffff, 0x80000,
+					   RF_ACTIVE);
+	if (sc->res_gmem3 == NULL) {
+		printf("cannot resource\n");
+		gdc_release_resource(dev);
+		return (ENXIO);
+	}
+
 	return (0);
 }
 
@@ -336,6 +359,8 @@ gdc_release_resource(device_t dev)
 		bus_release_resource(dev, SYS_RES_MEMORY, 1, sc->res_gmem1);
 	if (sc->res_gmem2)
 		bus_release_resource(dev, SYS_RES_MEMORY, 2, sc->res_gmem2);
+	if (sc->res_gmem3)
+		bus_release_resource(dev, SYS_RES_MEMORY, 3, sc->res_gmem3);
 
 	return (0);
 }
@@ -410,6 +435,7 @@ static device_method_t gdc_methods[] = {
 	DEVMETHOD(device_identify,	gdc_identify),
 	DEVMETHOD(device_probe,		gdcprobe),
 	DEVMETHOD(device_attach,	gdc_attach),
+	DEVMETHOD(device_detach,	gdc_detach),
 	{ 0, 0 }
 };
 
@@ -446,11 +472,11 @@ static video_adapter_t adapter_init_value[] = {
     { 0,
       KD_PC98, "gdc",			/* va_type, va_name */
       0, 0, 				/* va_unit, va_minor */
-      V_ADP_COLOR | V_ADP_MODECHANGE | V_ADP_BORDER, 
+      V_ADP_COLOR | V_ADP_MODECHANGE | V_ADP_BORDER | V_ADP_PALETTE,
       TEXT_GDC, 16, TEXT_GDC,		/* va_io*, XXX */
       VIDEO_BUF_BASE, VIDEO_BUF_SIZE,	/* va_mem* */
       TEXT_BUF_BASE, TEXT_BUF_SIZE, TEXT_BUF_SIZE, 0, /* va_window* */
-      0, 0, 				/* va_buffer, va_buffer_size */
+      0xfff00000, 0x80000,		/* va_buffer, va_buffer_size */
       0, M_PC98_80x25, 0, 		/* va_*mode* */
     },
 };
@@ -460,6 +486,10 @@ static video_adapter_t	biosadapter[1];
 /* video driver declarations */
 static int			gdc_configure(int flags);
 static int			gdc_err(video_adapter_t *adp, ...);
+static int			gdc_noerr(video_adapter_t *adp, ...);
+static vi_save_font_t		gdc_save_font;
+static vi_load_font_t		gdc_load_font;
+static vi_show_font_t		gdc_show_font;
 static vi_probe_t		gdc_probe;
 static vi_init_t		gdc_init;
 static vi_get_info_t		gdc_get_info;
@@ -488,9 +518,12 @@ static video_switch_t gdcvidsw = {
 	gdc_get_info,
 	gdc_query_mode,	
 	gdc_set_mode,
-	(vi_save_font_t *)gdc_err,
-	(vi_load_font_t *)gdc_err,
-	(vi_show_font_t *)gdc_err,
+//	(vi_save_font_t *)gdc_noerr,
+//	(vi_load_font_t *)gdc_noerr,
+//	(vi_show_font_t *)gdc_noerr,
+	gdc_save_font,
+	gdc_load_font,
+	gdc_show_font,
 	gdc_save_palette,
 	gdc_load_palette,
 	gdc_set_border,
@@ -506,8 +539,8 @@ static video_switch_t gdcvidsw = {
 	gdc_clear,
 	gdc_fill_rect,
 	gdc_bitblt,
-	(int (*)(void))gdc_err,
-	(int (*)(void))gdc_err,
+	(int (*)(void))gdc_noerr,
+	(int (*)(void))gdc_noerr,
 	gdc_diag,
 };
 
@@ -527,16 +560,18 @@ static video_info_t bios_vmode[] = {
 #ifndef GDC_NOGRAPHICS
     { M_PC98_EGC640x400, V_INFO_COLOR | V_INFO_GRAPHICS,
       640, 400, 8, 16, 4, 4,
-      GRAPHICS_BUF_BASE, GRAPHICS_BUF_SIZE, GRAPHICS_BUF_SIZE, 0, 0,
+//      GRAPHICS_BUF_BASE, GRAPHICS_BUF_SIZE, GRAPHICS_BUF_SIZE, 0, 0,
+      GRAPHICS_BUF_BASE, 0x8000, 0x20000, 0, 0,
       V_INFO_MM_PLANAR },
     { M_PC98_PEGC640x400, V_INFO_COLOR | V_INFO_GRAPHICS | V_INFO_VESA,
       640, 400, 8, 16, 8, 1,
-      GRAPHICS_BUF_BASE, 0x00008000, 0x00008000, 0, 0,
+      GRAPHICS_BUF_BASE, 0x0008000, 0x00080000, 0, 0,
       V_INFO_MM_PACKED, 1 },
 #ifdef LINE30
-    { M_PC98_PEGC640x480, V_INFO_COLOR | V_INFO_GRAPHICS | V_INFO_VESA,
+    { M_PC98_PEGC640x480, V_INFO_COLOR | V_INFO_GRAPHICS | V_INFO_VESA | V_INFO_LINEAR,
       640, 480, 8, 16, 8, 1,
-      GRAPHICS_BUF_BASE, 0x00008000, 0x00008000, 0, 0,
+//      GRAPHICS_BUF_BASE, 0x00008000, 0x00080000, 0xf00000, 0x80000,
+      0xfff00000, 0x00080000, 0x00080000, 0xfff00000, 0x80000,
       V_INFO_MM_PACKED, 1 },
 #endif
 #endif
@@ -748,22 +783,23 @@ static void initialize_gdc(unsigned int mode, int isGraph)
 
     gdc_clock = check_gdc_clock();
     m_mode = (mode == T25_G400) ? _25L : _30L;
+    if(m_mode == _30L){
+	outb(0x9a8, 1);
+	if((inb(0x9a8) != 0xff) && (inb(0x9a8) & 0x1)){
+		hsync_clock = _31KHZ;
+		mode = T30_G480;
+	}else{
+		outb(0x9a8,0);
+		hsync_clock = _24KHZ;
+	}
+    }else{
+	if(gdc_FH == _24KHZ)outb(0x9a8,0);
+	hsync_clock = gdc_FH;
+    }
     s_mode = 2*mode+gdc_clock;
     gdc_INFO = m_mode;
 
     master_gdc_wait_vsync();
-
-    if ((PC98_SYSTEM_PARAMETER(0x597) & 0x80) ||
-	(PC98_SYSTEM_PARAMETER(0x458) & 0x80)) {
-	if (PC98_SYSTEM_PARAMETER(0x481) & 0x08) {
-	    hsync_clock = (m_mode == _25L) ? gdc_FH : _31KHZ;
-	    outb(0x9a8, (hsync_clock == _31KHZ) ? 1 : 0);
-	} else {
-	    hsync_clock = gdc_FH;
-	}
-    } else {
-	hsync_clock = _24KHZ;
-    }
 
     if ((gdc_clock == _2_5MHZ) &&
 	(slave_param[hsync_clock][s_mode][GDC_LF] > 400)) {
@@ -849,9 +885,11 @@ static void initialize_gdc(unsigned int mode, int isGraph)
     master_gdc_cmd(isGraph ? _GDC_STOP : _GDC_START);
 #else
     master_gdc_wait_vsync();
-    master_gdc_cmd(isGraph ? _GDC_STOP : _GDC_START);	/* text */
+#    master_gdc_cmd(isGraph ? _GDC_STOP : _GDC_START);	/* text */
+    master_gdc_cmd(_GDC_START);	/* text */
     gdc_wait_vsync();
-    gdc_cmd(isGraph ? _GDC_START : _GDC_STOP);		/* graphics */
+#    gdc_cmd(isGraph ? _GDC_START : _GDC_STOP);		/* graphics */
+    gdc_cmd(_GDC_START);		/* graphics */
 #endif
 }
 
@@ -913,6 +951,39 @@ gdc_load_palette(video_adapter_t *adp, u_char *palette)
 }
 
 static int
+gdc_load_palette2(video_adapter_t *adp, int base, int count,
+		u_char *r, u_char *g, u_char *b)
+{
+    int i;
+
+    if (adp->va_info.vi_flags & V_INFO_VESA) {
+	gdc_wait_vsync();
+	for (i = base; i < base + count ; i++) {
+	    outb(0xa8, i);
+	    outb(0xac, r[i]);	/* R */
+	    outb(0xaa, g[i]);	/* G */
+	    outb(0xae, b[i]);	/* B */
+	}
+    } else {
+	/*
+	 * XXX - Even though PC-98 text color is independent of palette,
+	 * we should set palette in text mode.
+	 * Because the background color of text mode is palette 0's one.
+	 */
+	outb(0x6a, 1);		/* 16 colors mode */
+	gdc_wait_vsync();
+	for (i = base ; i < base + count; ++i) {
+	    outb(0xa8, i);
+	    outb(0xac, r[i] >> 4);	/* R */
+	    outb(0xaa, g[i] >> 4);	/* G */
+	    outb(0xae, b[i] >> 4);	/* B */
+	}
+    }
+    return 0;
+}
+
+
+static int
 gdc_save_palette(video_adapter_t *adp, u_char *palette)
 {
 #ifndef GDC_NOGRAPHICS
@@ -931,6 +1002,20 @@ gdc_save_palette(video_adapter_t *adp, u_char *palette)
 #endif
     return 0;
 }
+static int
+gdc_save_palette2(video_adapter_t *adp, int base, int count,
+		u_char *r, u_char *g, u_char *b)
+{
+	int i;
+
+	for (i = base; i < base + count; ++i){
+		outb(0xa8,i);
+		r[i] = inb(0xac);
+		g[i] = inb(0xaa);
+		b[i] = inb(0xae);
+	}
+	return 0;
+}
 
 static int
 gdc_set_origin(video_adapter_t *adp, off_t offset)
@@ -938,12 +1023,36 @@ gdc_set_origin(video_adapter_t *adp, off_t offset)
 #ifndef GDC_NOGRAPHICS
     if (adp->va_info.vi_flags & V_INFO_VESA) {
 	writew(BIOS_PADDRTOVADDR(0x000e0004), offset >> 15);
+	writew(BIOS_PADDRTOVADDR(0x000e0006), (offset >> 15) + 1);
     }
 #endif
     return 0;
 }
 
 /* entry points */
+static int
+gdc_save_font(video_adapter_t *adp, int page, int fontsize, int fontwidth,
+		u_char *data, int ch, int count)
+{
+	return 0;
+}
+static int
+gdc_load_font(video_adapter_t *adp, int page, int fontsize, int fontwidth,
+		u_char *data, int ch, int count)
+{
+	return 0;
+}
+static int
+gdc_show_font(video_adapter_t *adp, int page)
+{
+	return 0;
+}
+
+static int
+gdc_noerr(video_adapter_t *adp, ...)
+{
+    return 0;
+}
 
 static int
 gdc_err(video_adapter_t *adp, ...)
@@ -1001,7 +1110,7 @@ gdc_get_info(video_adapter_t *adp, int mode, video_info_t *info)
 	    continue;
 	if (mode == bios_vmode[i].vi_mode) {
 	    *info = bios_vmode[i];
-	    info->vi_buffer_size = info->vi_window_size*info->vi_planes;
+//	    info->vi_buffer_size = info->vi_window_size*info->vi_planes;
 	    return 0;
 	}
     }
@@ -1077,14 +1186,22 @@ gdc_set_mode(video_adapter_t *adp, int mode)
 #ifndef GDC_NOGRAPHICS
 	case M_PC98_PEGC640x480:	/* PEGC 640x480 */
 	    initialize_gdc(T30_G480, info.vi_flags & V_INFO_GRAPHICS);
+		writew(BIOS_PADDRTOVADDR(0x000e0004), 0);
+		writew(BIOS_PADDRTOVADDR(0x000e0006), 1);
+		writew(BIOS_PADDRTOVADDR(0x000e0102), 1);
 	    break;
 	case M_PC98_PEGC640x400:	/* PEGC 640x400 */
 	case M_PC98_EGC640x400:		/* EGC GRAPHICS */
+		writew(BIOS_PADDRTOVADDR(0x000e0004), 0);
+		writew(BIOS_PADDRTOVADDR(0x000e0006), 1);
+		writew(BIOS_PADDRTOVADDR(0x000e0102), 0);
 #endif
 	case M_PC98_80x25:		/* VGA TEXT */
+	case 200:
 	    initialize_gdc(T25_G400, info.vi_flags & V_INFO_GRAPHICS);
 	    break;
 	case M_PC98_80x30:		/* VGA TEXT */
+	case 201:
 	    initialize_gdc(T30_G400, info.vi_flags & V_INFO_GRAPHICS);
 	    break;
 	default:
@@ -1125,6 +1242,11 @@ gdc_set_mode(video_adapter_t *adp, int mode)
     } else {
     	adp->va_buffer = BIOS_PADDRTOVADDR(info.vi_buffer);
     	adp->va_buffer_size = info.vi_buffer_size;
+    }
+    if (info.vi_flags & V_INFO_LINEAR){
+	adp->va_window = adp->va_buffer;
+	adp->va_window_size = info.vi_buffer_size;
+	adp->va_window_gran = info.vi_buffer_size;
     }
     if (info.vi_flags & V_INFO_GRAPHICS) {
 	switch (info.vi_depth/info.vi_planes) {
@@ -1341,10 +1463,17 @@ static int
 gdc_mmap_buf(video_adapter_t *adp, vm_ooffset_t offset, vm_offset_t *paddr,
 	     int prot, vm_memattr_t *memattr)
 {
+    if (adp->va_info.vi_flags & V_INFO_LINEAR){
+    	if (offset > 0x80000 - PAGE_SIZE)
+		return -1;
+    *paddr = adp->va_info.vi_window + offset;
+	*paddr = adp->va_info.vi_buffer + offset;
+	}else{
     /* FIXME: is this correct? XXX */
     if (offset > VIDEO_BUF_SIZE - PAGE_SIZE)
 	return -1;
     *paddr = adp->va_info.vi_window + offset;
+	}
     return 0;
 }
 
@@ -1404,7 +1533,6 @@ gdc_clear(video_adapter_t *adp)
 static int
 gdc_clear(video_adapter_t *adp)
 {
-
     return 0;
 }
 #endif /* GDC_NOGRAPHICS */
@@ -1421,6 +1549,65 @@ gdc_bitblt(video_adapter_t *adp,...)
     /* FIXME */
     return ENODEV;
 }
+static int
+get_palette(video_adapter_t *adp, int base, int count,
+	u_char *red, u_char *green, u_char *blue, u_char *trans)
+{
+	u_char *r;
+	u_char *g;
+	u_char *b;
+
+	if(base < 0 || base >= 256 || count < 0 || count > 256)
+		return (1);
+
+	r = malloc(count*3, M_DEVBUF, M_WAITOK);
+	g = r + count;
+	b = g + count;
+	if(gdc_save_palette2(adp,base,count,r,g,b)){
+		free(r,M_DEVBUF);
+		return ENODEV;
+	}
+	copyout(r, red, count);
+	copyout(g, green, count);
+	copyout(b, blue, count);
+
+	if(trans != NULL){
+		bzero(r,count);
+		copyout(r,trans, count);
+	}
+	free(r,M_DEVBUF);
+	return 0;
+}
+
+static int
+set_palette(video_adapter_t *adp, int base, int count,
+	u_char *red, u_char *green, u_char *blue, u_char *trans)
+{
+	u_char *r;
+	u_char *g;
+	u_char *b;
+	int err;
+	if(base < 0 || base >= 256 || count < 0 || count > 256)
+		return (1);
+
+	r = malloc(count*3, M_DEVBUF, M_WAITOK);
+	g = r + count;
+	b = g + count;
+	err = copyin(red, r, count);
+	if(!err){
+	  err = copyin(green, g, count);
+	}
+	if(!err){
+	  err = copyin(blue, b, count);
+	}
+	if(!err){
+	  err = gdc_load_palette2(adp, base, count, r, g, b);
+	}
+	free(r, M_DEVBUF);
+	
+	return (err ? ENODEV : 0);
+}
+
 
 static int
 gdc_dev_ioctl(video_adapter_t *adp, u_long cmd, caddr_t arg)
@@ -1430,14 +1617,42 @@ gdc_dev_ioctl(video_adapter_t *adp, u_long cmd, caddr_t arg)
 	*(u_int *)arg = 0;
 	return 0;
 
+    case FBIO_GETPALETTE:	/* get color palette */
+	return get_palette(adp, ((video_color_palette_t *)arg)->index,
+			((video_color_palette_t *)arg)->count,
+			((video_color_palette_t *)arg)->red,
+			((video_color_palette_t *)arg)->green,
+			((video_color_palette_t *)arg)->blue,
+			((video_color_palette_t *)arg)->transparent);
+    case FBIOGETCMAP:		/* get color palette */
+	return get_palette(adp, ((struct fbcmap *)arg)->index,
+			((struct fbcmap *)arg)->count,
+			((struct fbcmap *)arg)->red,
+			((struct fbcmap *)arg)->green,
+			((struct fbcmap *)arg)->blue,NULL);
+    case FBIO_SETPALETTE:	/* set color palette */
+	return set_palette(adp, ((video_color_palette_t *)arg)->index,
+			((video_color_palette_t *)arg)->count,
+			((video_color_palette_t *)arg)->red,
+			((video_color_palette_t *)arg)->green,
+			((video_color_palette_t *)arg)->blue,
+			((video_color_palette_t *)arg)->transparent);
+    case FBIOPUTCMAP:		/* set color palette */
+	return set_palette(adp, ((struct fbcmap *)arg)->index,
+			((struct fbcmap *)arg)->count,
+			((struct fbcmap *)arg)->red,
+			((struct fbcmap *)arg)->green,
+			((struct fbcmap *)arg)->blue,NULL);
+
     case FBIO_SETWINORG:	/* set frame buffer window origin */
     case FBIO_SETDISPSTART:	/* set display start address */
     case FBIO_SETLINEWIDTH:	/* set scan line length in pixel */
-    case FBIO_GETPALETTE:	/* get color palette */
-    case FBIO_SETPALETTE:	/* set color palette */
-    case FBIOGETCMAP:		/* get color palette */
-    case FBIOPUTCMAP:		/* set color palette */
-	return ENODEV;
+//    case FBIO_GETPALETTE:	/* get color palette */
+//    case FBIO_SETPALETTE:	/* set color palette */
+//    case FBIOGETCMAP:		/* get color palette */
+//    case FBIOPUTCMAP:		/* set color palette */
+	return fb_commonioctl(adp, cmd, arg);
+//	return ENODEV;
 
     case FBIOGTYPE:		/* get frame buffer type info. */
 	((struct fbtype *)arg)->fb_type = fb_type(adp->va_type);
