@@ -25,7 +25,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__FBSDID("$FreeBSD: releng/11.4/sys/geom/part/g_part.c 339286 2018-10-10 15:44:14Z emaste $");
 
 #include <sys/param.h>
 #include <sys/bio.h>
@@ -297,8 +297,11 @@ g_part_get_physpath_done(struct bio *bp)
 	g_std_done(bp);
 }
 
-
+/*
 #define	DPRINTF(...)	if (bootverbose) {	\
+	printf("GEOM_PART: " __VA_ARGS__);	\
+*/
+#define	DPRINTF(...)	if (1) {	\
 	printf("GEOM_PART: " __VA_ARGS__);	\
 }
 

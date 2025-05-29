@@ -165,7 +165,7 @@ pc98_set_chs(struct g_part_table *table, uint32_t lba, u_short *cylp,
 {
 	uint32_t cyl, hd, sec;
 
-	sec = lba % table->gpt_sectors + 1;
+	sec = lba % table->gpt_sectors;// + 1;
 	lba /= table->gpt_sectors;
 	hd = lba % table->gpt_heads;
 	lba /= table->gpt_heads;
@@ -202,8 +202,13 @@ g_part_pc98_add(struct g_part_table *basetable, struct g_part_entry *baseentry,
 	struct g_part_pc98_entry *entry;
 	uint32_t start, size;
 	int error;
+	char *sname="FreeBSD         ";
+	sname[16] = '\0';
 
 	entry = (struct g_part_pc98_entry *)baseentry;
+//	strncpy(entry->ent.dp_name, sname, 17);
+//	strncpy(gpp->gpp_label, sname, 17);
+
 	start = gpp->gpp_start;
 	size = gpp->gpp_size;
 	if (pc98_align(basetable, &start, &size) != 0)
@@ -222,14 +227,16 @@ g_part_pc98_add(struct g_part_table *basetable, struct g_part_entry *baseentry,
 	pc98_set_chs(basetable, baseentry->gpe_end, &entry->ent.dp_ecyl,
 	    &entry->ent.dp_ehd, &entry->ent.dp_esect);
 
+	entry->ent.dp_mid |= PC98_MID_BOOTABLE;
+	entry->ent.dp_sid |= PC98_SID_ACTIVE;
 	error = pc98_parse_type(gpp->gpp_type, &entry->ent.dp_mid,
 	    &entry->ent.dp_sid);
 	if (error)
 		return (error);
-
 	if (gpp->gpp_parms & G_PART_PARM_LABEL)
 		return (pc98_set_slicename(gpp->gpp_label, entry->ent.dp_name));
-
+	else
+		return (pc98_set_slicename(sname, entry->ent.dp_name));
 	return (0);
 }
 
@@ -410,7 +417,8 @@ g_part_pc98_probe(struct g_part_table *table, struct g_consumer *cp)
 	/* We goto out on mismatch. */
 	res = ENXIO;
 
-	magic = le16dec(buf + PC98_MAGICOFS);
+//	magic = le16dec(buf + PC98_MAGICOFS);
+	magic = le16dec(buf + 0xfe);//Kakutyou Format Signature
 	if (magic != PC98_MAGIC)
 		goto out;
 
@@ -421,14 +429,15 @@ g_part_pc98_probe(struct g_part_table *table, struct g_consumer *cp)
 		res = G_PART_PROBE_PRI_LOW;
 		goto out;
 	}
-
 	for (index = 0; index < PC98_NPARTS; index++) {
 		p = buf + SECSIZE + index * PC98_PARTSIZE;
 		if (p[0] == 0 || p[1] == 0)	/* !dp_mid || !dp_sid */
 			continue;
+		if((p[0] > 0xe0) && (p[1] > 0xe0))goto out;
 		scyl = le16dec(p + 10);
 		ecyl = le16dec(p + 14);
-		if (scyl == 0 || ecyl == 0)
+//		if (scyl == 0 || ecyl == 0)
+		if (scyl == 0 && ecyl == 0)
 			goto out;
 		if (p[8] == p[12] &&		/* dp_ssect == dp_esect */
 		    p[9] == p[13] &&		/* dp_shd == dp_ehd */
@@ -464,6 +473,12 @@ g_part_pc98_read(struct g_part_table *basetable, struct g_consumer *cp)
 	if (buf == NULL)
 		return (error);
 
+	if( !( ( (buf[2]|buf[3]<<8) == 0x9090 ) || ( (buf[2]|buf[3]<<8) == 0 ) ) ){
+		printf("Geometry modified to %d:%d\n",buf[3],buf[2]);
+		basetable->gpt_heads = buf[3];
+		basetable->gpt_sectors = buf[2];
+	}
+
 	cyl = basetable->gpt_heads * basetable->gpt_sectors;
 
 	bcopy(buf, table->boot, sizeof(table->boot));
@@ -489,15 +504,17 @@ g_part_pc98_read(struct g_part_table *basetable, struct g_consumer *cp)
 		if (ent.dp_sid == 0)
 			continue;
 
-		start = ent.dp_scyl * cyl;
-		end = (ent.dp_ecyl + 1) * cyl - 1;
+		start = ent.dp_scyl * cyl + ent.dp_shd * basetable->gpt_sectors + ent.dp_ssect;
+		end = ent.dp_ecyl * cyl + ent.dp_ehd * basetable->gpt_sectors + ent.dp_esect;
+		if ((ent.dp_ehd == 0) && (ent.dp_esect == 0))
+			 end = (ent.dp_ecyl + 1) * cyl -1;
 		entry = (struct g_part_pc98_entry *)g_part_new_entry(basetable,
 		    index + 1, start, end);
 		entry->ent = ent;
 	}
 
 	basetable->gpt_entries = PC98_NPARTS;
-	basetable->gpt_first = cyl;
+	basetable->gpt_first = 18;//cyl;
 	basetable->gpt_last = msize - 1;
 
 	g_free(buf);
@@ -567,6 +584,17 @@ g_part_pc98_type(struct g_part_table *basetable, struct g_part_entry *baseentry,
 	    ((entry->ent.dp_sid & PC98_SID_MASK) << 8);
 	if (type == (PC98_MID_386BSD | (PC98_SID_386BSD << 8)))
 		return (g_part_alias_name(G_PART_ALIAS_FREEBSD));
+	type = entry->ent.dp_sid;
+	if ((type&0x31) == (0x31))
+		return (g_part_alias_name(G_PART_ALIAS_MS_NTFS));
+	if ((type&0x4f) == (0x1))
+		return (g_part_alias_name(G_PART_ALIAS_MS_FAT16));
+	if ((type&0x4f) == (0x41))
+		return (g_part_alias_name(G_PART_ALIAS_MS_FAT32));
+	if ((type&0xf) == (0x6))
+		return (g_part_alias_name(G_PART_ALIAS_MS_BASIC_DATA));
+	if ((type&0xf) == (0x4))
+		return (g_part_alias_name(G_PART_ALIAS_LINUX_DATA));
 	snprintf(buf, bufsz, "!%d", type);
 	return (buf);
 }
@@ -591,9 +619,9 @@ g_part_pc98_write(struct g_part_table *basetable, struct g_consumer *cp)
 			p[1] = entry->ent.dp_sid;
 			p[2] = entry->ent.dp_dum1;
 			p[3] = entry->ent.dp_dum2;
-			p[4] = entry->ent.dp_ipl_sct;
-			p[5] = entry->ent.dp_ipl_head;
-			le16enc(p + 6, entry->ent.dp_ipl_cyl);
+			p[4] = entry->ent.dp_ssect;//entry->ent.dp_ipl_sct;
+			p[5] = entry->ent.dp_shd;//entry->ent.dp_ipl_head;
+			le16enc(p + 6, entry->ent.dp_scyl);//entry->ent.dp_ipl_cyl);
 			p[8] = entry->ent.dp_ssect;
 			p[9] = entry->ent.dp_shd;
 			le16enc(p + 10, entry->ent.dp_scyl);
