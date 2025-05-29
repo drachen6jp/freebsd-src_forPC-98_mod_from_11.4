@@ -33,7 +33,7 @@
 
 #include <dev/sound/pcm/sound.h>
 
-SND_DECLARE_FILE("$FreeBSD$");
+SND_DECLARE_FILE("$FreeBSD: releng/11.4/sys/dev/sound/isa/mss.c 331722 2018-03-29 02:50:57Z eadler $");
 
 /* board-specific include files */
 #include <dev/sound/isa/mss.h>
@@ -340,10 +340,13 @@ mss_alloc_resources(struct mss_info *mss, device_t dev)
 						   &mss->drq2_rid,
 						   RF_ACTIVE);
 
+if(mss->io_base)printf("mss->iobase %llx\n",rman_get_start(mss->io_base));
+
 	if (!mss->io_base || !mss->drq1 || !mss->irq) ok = 0;
 	if (mss->conf_rid >= 0 && !mss->conf_base) ok = 0;
 	if (mss->drq2_rid >= 0 && !mss->drq2) ok = 0;
 
+	printf("pcm allocate %x\n",ok);
 	if (ok) {
 		pdma = rman_get_start(mss->drq1);
 		isa_dma_acquire(pdma);
@@ -1304,6 +1307,36 @@ mss_probe(device_t dev)
     	}
     	if (!mss->io_base) goto no;
 
+#ifdef PC98
+	if(rman_get_start(mss->io_base) == 0xf40){//Mate-X PCM compatible
+	int i = inb(0xf40);
+	if(i==0xff){
+		outb(0x57e3,0x50);//WSN-V
+		if (inb(0xf40) == 0xff)goto nopcm;
+		outb(0x5be3,0x6);
+		outb(0xf48,2);
+   	 	irq = isa_get_irq(dev);
+		goto MELCO;
+	}
+	switch(i & 0x38){
+		case 0x8:irq = 3;
+			break;
+		case 0x10:irq = 5;
+			break;
+		case 0x18:irq = 10;
+			break;
+		case 0x20:irq = 12;
+			break;
+//		default:
+//			irq = 5;
+//			break;
+		}
+MELCO:
+	printf("port f40 get %x irq %d\n",i&0x38,irq);
+	bus_set_resource(dev, SYS_RES_IRQ, 0, irq, 1);
+	}
+nopcm:
+#endif
     	/* got irq/dma regs? */
     	flags = device_get_flags(dev);
     	irq = isa_get_irq(dev);
@@ -1702,7 +1735,8 @@ mss_doattach(device_t dev, struct mss_info *mss)
     	char status[SND_STATUSLEN], status2[SND_STATUSLEN];
 
 	mss->lock = snd_mtxcreate(device_get_nameunit(dev), "snd_mss softc");
-	mss->bufsize = pcm_getbuffersize(dev, 4096, MSS_DEFAULT_BUFSZ, 65536);
+//	mss->bufsize = pcm_getbuffersize(dev, 4096, MSS_DEFAULT_BUFSZ, 65536);
+	mss->bufsize = pcm_getbuffersize(dev, 4096, 65536, 65536);
     	if (!mss_alloc_resources(mss, dev)) goto no;
     	mss_init(mss, dev);
 	pdma = rman_get_start(mss->drq1);
@@ -1739,6 +1773,24 @@ mss_doattach(device_t dev, struct mss_info *mss)
 		io_wr(mss, 0, bits);
 		printf("drq/irq conf %x\n", io_rd(mss, 0));
     	}
+#ifdef PC98
+//	if(rman_get_start(mss->io_base) == 0xf40){//Mate-X PCM compatible
+		char		bits98;
+		switch(rman_get_start(mss->irq)){
+			case 3:bits98 = 0x8;break;
+			case 5:bits98 = 0x10;break;
+			case 10:bits98= 0x18;break;
+			case 12:bits98= 0x20;break;
+		}
+		switch(rman_get_start(mss->drq1)){
+			case 0:bits98 |= 0x1;break;
+			case 1:bits98 |= 0x2;break;
+			case 3:bits98 |= 0x3;break;
+		}
+		outb(rman_get_start(mss->io_base),bits98);
+		outb(0xa460, 0x83);//OPNA mask
+//	}
+#endif
     	mixer_init(dev, (mss->bd_id == MD_YM0020)? &ymmix_mixer_class : &mssmix_mixer_class, mss);
     	switch (mss->bd_id) {
     	case MD_OPTI931:
@@ -1749,6 +1801,7 @@ mss_doattach(device_t dev, struct mss_info *mss)
     	}
     	if (pdma == rdma)
 		pcm_setflags(dev, pcm_getflags(dev) | SD_F_SIMPLEX);
+#if 1
     	if (bus_dma_tag_create(/*parent*/bus_get_dma_tag(dev), /*alignment*/2,
 			/*boundary*/0,
 			/*lowaddr*/BUS_SPACE_MAXADDR_24BIT,
@@ -1758,6 +1811,19 @@ mss_doattach(device_t dev, struct mss_info *mss)
 			/*maxsegz*/0x3ffff, /*flags*/0,
 			/*lockfunc*/busdma_lock_mutex, /*lockarg*/&Giant,
 			&mss->parent_dmat) != 0) {
+
+#else
+    	if (bus_dma_tag_create(/*parent*/bus_get_dma_tag(dev), /*alignment*/2,
+			/*boundary*/0,
+			/*lowaddr*/BUS_SPACE_MAXADDR_32BIT,
+			/*highaddr*/BUS_SPACE_MAXADDR,
+			/*filter*/NULL, /*filterarg*/NULL,
+			/*maxsize*/mss->bufsize, /*nsegments*/1,
+			/*maxsegz*/0x3ffff, /*flags*/0,
+			/*lockfunc*/busdma_lock_mutex, /*lockarg*/&Giant,
+			&mss->parent_dmat) != 0) {
+#endif
+
 		device_printf(dev, "unable to create dma tag\n");
 		goto no;
     	}
@@ -1964,6 +2030,23 @@ static struct isa_pnp_id pnpmss_ids[] = {
 #if 0
 	{0x0000561e, "GusPnP"},				/* GRV0000 */
 #endif
+	{0x0618a3b8, "NEC sound device Np"},	/*Mate-X(Np) */
+	{0x0718a3b8, "NEC sound device MATE-X PCM"},	/* Mate-X PCM */
+	{0x0818a3b8, "NEC sound device CanBe"},		/* CanBe 118*/
+	{0x0918a3b8, "NEC sound device CanBe2"},	/* CanBe2 */
+	{0x1918a3b8, "NEC sound device CanBe3 (YMF701)"},	/* PC-9821Nr166/X */
+	{0x1a18a3b8, "NEC sound device CanBe3 (YMF701) No OPN3"},	/* */
+	{0x1b18a3b8, "NEC sound device CanBe3(YMF715B) No OPN3"},/* PC-9821Nw133 */
+	{0x1c18a3b8, "NEC sound device CanBe3(YMF715B)"},/**/
+//	{0x6181a3b8, "NEC PC-9801-118 PnP Mode"},	/* PC-9801-118 noPCM */
+//	{0x6281a3b8, "NEC PC-9801-118 PnP Mode"},	/* PC-9801-118 noPCM */
+//	{0x6381a3b8, "NEC PC-9801-118 PnP Mode"},	/* PC-9801-118 noPCM */
+//	{0x6481a3b8, "NEC PC-9801-118 PnP Mode"},	/* PC-9801-118 noPCM */
+	{0x6581a3b8, "NEC PC-9801-118 PnP Mode dualDMA withoutMIDI"},	/* PC-9801-118 dualDMA*/
+	{0x6681a3b8, "NEC PC-9801-118 PnP Mode dualDMA withMIDI"},	/* PC-9801-118 with MIDI IRQ */
+	{0x6781a3b8, "NEC PC-9801-118 PnP Mode singleDMA withoutMIDI"},	/* PC-9801-118 singleDMAwithout MIDI*/
+	{0x6881a3b8, "NEC PC-9801-118 PnP Mode singleDMA withMIDI"},	/* PC-9801-118 singleDMAwith MIDI IRQ */
+	{0x110254dc, "Q-Vision WaveStar PnP Mode"},
 	{0},
 };
 
@@ -1976,7 +2059,7 @@ pnpmss_probe(device_t dev)
 	vid = isa_get_vendorid(dev);
 	if (lid == 0x01000000 && vid != 0x0100a90d) /* CMI0001 */
 		return ENXIO;
-	return ISA_PNP_PROBE(device_get_parent(dev), dev, pnpmss_ids);
+	return(ISA_PNP_PROBE(device_get_parent(dev), dev, pnpmss_ids));
 }
 
 static int
@@ -1993,6 +2076,42 @@ pnpmss_attach(device_t dev)
 	mss->bd_id = MD_CS42XX;
 
 	switch (isa_get_logicalid(dev)) {
+	case 0x110254dc://Q-Vision WaveStar
+		break;
+	case 0x0618a3b8:			/* Mate-X PCM(Np) */
+	case 0x0718a3b8:			/* Mate-X PCM     */
+	case 0x0818a3b8:			/* CanBe118 */
+	case 0x0918a3b8:			/* CanBe2 */
+		mss->drq2_rid = -1;
+	case 0x1918a3b8:			/*dual DMA */
+	case 0x1a18a3b8:			/**/
+	case 0x1b18a3b8:			/*dual DMA YMF715B?*/
+	case 0x1c18a3b8:			/**/
+	    	mss->bd_id = MD_CS423X;
+		device_set_flags(dev, DV_F_TRUE_MSS);
+		break;
+
+	case 0x6881a3b8:			/* with MIDI IRQ single DMA*/
+	case 0x6681a3b8:			/* PC-9801-118 dual DMA?*/
+		mss->irq_rid = 1;//with MIDI
+				//0 MIDI
+				//1 PCM & FM
+	case 0x6781a3b8:			/* without MIDI IRQ single DMA*/
+	case 0x6581a3b8:			/* PC-9801-118 *///dual dma?
+		mss->drq2_rid = -1;
+		mss->io_rid = 7;
+				//0 0x480 what?
+				//1 0x1480 OPL3 etc
+				//2 0x188 OPN
+				//3 0xA460 SOUNDID
+				//4 0xC24 nearPnP
+				//5 0xC2A
+				//6 0xC2C
+				//7 0xF40 PCM
+	      	mss->bd_id = MD_CS423X;
+		device_set_flags(dev, DV_F_TRUE_MSS);
+		break;
+
 	case 0x0000630e:			/* CSC0000 */
 	case 0x0001630e:			/* CSC0100 */
 	    mss->bd_flags |= BD_F_MSS_OFFSET;
