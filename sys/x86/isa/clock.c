@@ -34,7 +34,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__FBSDID("$FreeBSD: releng/11.4/sys/x86/isa/clock.c 331722 2018-03-29 02:50:57Z eadler $");
 
 /*
  * Routines to handle clock hardware.
@@ -459,7 +459,7 @@ i8254_init(void)
 {
 
 #ifdef PC98
-	if (pc98_machine_type & M_8M)
+	if ( (pc98_machine_type & M_8M) && (inb(0x42) != 0xff) )
 		i8254_freq = 1996800L; /* 1.9968 MHz */
 #endif
 	set_i8254_freq(MODE_STOP, 0);
