@@ -1,4 +1,4 @@
-/* $FreeBSD$ */
+/* $FreeBSD: releng/11.4/sys/fs/msdosfs/msdosfs_conv.c 333610 2018-05-14 19:20:37Z pfg $ */
 /*	$NetBSD: msdosfs_conv.c,v 1.25 1997/11/17 15:36:40 ws Exp $	*/
 
 /*-
@@ -395,6 +395,7 @@ unix2dosfn(const u_char *un, u_char dn[12], size_t unlen, u_int gen,
 					break;
 				}
 			} else {
+				if(c < 0x7b && c > 0x60) c = c - 0x20;//decapitalize
 				dn[j] = c;
 			}
 			if (((dn[j] & 0x80) || *(cp - 1) != dn[j]) && conv != 3)
@@ -434,6 +435,7 @@ unix2dosfn(const u_char *un, u_char dn[12], size_t unlen, u_int gen,
 				break;
 			}
 		} else {
+			if(c < 0x7b && c > 0x60) c = c - 0x20;//decapitalize
 			dn[j] = c;
 		}
 		if (((dn[j] & 0x80) || *(un - 1) != dn[j]) && conv != 3)

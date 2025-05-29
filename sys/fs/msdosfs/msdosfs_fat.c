@@ -1,4 +1,4 @@
-/* $FreeBSD$ */
+/* $FreeBSD: releng/11.4/sys/fs/msdosfs/msdosfs_fat.c 353721 2019-10-18 08:38:07Z kib $ */
 /*	$NetBSD: msdosfs_fat.c,v 1.28 1997/11/17 15:36:49 ws Exp $	*/
 
 /*-
@@ -941,8 +941,9 @@ fillinusemap(struct msdosfsmount *pmp)
 			printf("mountmsdosfs(): Media descriptor in BPB"
 			    "does not match FAT ID\n");
 #endif
-			brelse(bp);
-			return (EINVAL);
+			printf("Media descripter = %x readcn =%lx fatmask = %x\n",pmp->pm_bpb.bpbMedia,readcn,pmp->pm_fatmask);
+//			brelse(bp);
+//			return (EINVAL);
 		} else if (readcn == CLUST_FREE)
 			usemap_free(pmp, cn);
 	}
@@ -952,7 +953,6 @@ fillinusemap(struct msdosfsmount *pmp)
 	for (cn = pmp->pm_maxcluster + 1; cn < (pmp->pm_maxcluster +
 	    N_INUSEBITS) / N_INUSEBITS; cn++)
 		pmp->pm_inusemap[cn / N_INUSEBITS] |= 1U << (cn % N_INUSEBITS);
-
 	return (0);
 }
 
@@ -1162,6 +1162,9 @@ markvoldirty(struct msdosfsmount *pmp, int dirty)
 	 * bit.  Dirty means clear the "clean" bit; clean means set the
 	 * "clean" bit.
 	 */
+
+printf("fat cluster %lu \n",bo);
+dirty = 0;
 	if (FAT32(pmp)) {
 		/* FAT32 uses bit 27. */
 		fatval = getulong(&bp->b_data[bo]);
