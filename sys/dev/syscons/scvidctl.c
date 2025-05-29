@@ -28,7 +28,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__FBSDID("$FreeBSD: releng/11.4/sys/dev/syscons/scvidctl.c 331722 2018-03-29 02:50:57Z eadler $");
 
 #include "opt_compat.h"
 #include "opt_syscons.h"
@@ -160,24 +160,25 @@ sc_set_text_mode(scr_stat *scp, struct tty *tp, int mode, int xsize, int ysize,
 #ifndef SC_NO_FONT_LOADING
     switch (fontsize) {
     case 8:
-	if ((scp->sc->fonts_loaded & FONT_8) == 0)
-	    return (EINVAL);
+//	if ((scp->sc->fonts_loaded & FONT_8) == 0)
+//	    return (EINVAL);
 	font = scp->sc->font_8;
 	break;
     case 14:
-	if ((scp->sc->fonts_loaded & FONT_14) == 0)
-	    return (EINVAL);
+//	if ((scp->sc->fonts_loaded & FONT_14) == 0)
+//	    return (EINVAL);
 	font = scp->sc->font_14;
 	break;
     case 16:
-	if ((scp->sc->fonts_loaded & FONT_16) == 0)
-	    return (EINVAL);
+//	if ((scp->sc->fonts_loaded & FONT_16) == 0)
+//	    return (EINVAL);
 	font = scp->sc->font_16;
 	break;
     }
 #else
     font = NULL;
 #endif
+    font = NULL;
     if ((xsize <= 0) || (xsize > info.vi_width))
 	xsize = info.vi_width;
     if ((ysize <= 0) || (ysize > info.vi_height))
@@ -192,7 +193,8 @@ sc_set_text_mode(scr_stat *scp, struct tty *tp, int mode, int xsize, int ysize,
 
     if (sc_render_match(scp, scp->sc->adp->va_name, 0) == NULL) {
 	splx(s);
-	return ENODEV;
+	printf("no match\n");
+//	return ENODEV;
     }
 
     /* set up scp */
@@ -317,8 +319,10 @@ sc_set_pixel_mode(scr_stat *scp, struct tty *tp, int xsize, int ysize,
     int s;
 
     if (vidd_get_info(scp->sc->adp, scp->mode, &info))
+{
+	printf("vidd get info error\n");
 	return ENODEV;		/* this shouldn't happen */
-
+}
     /* adjust argument values */
     if (fontsize <= 0)
 	fontsize = info.vi_cheight;
@@ -355,11 +359,15 @@ sc_set_pixel_mode(scr_stat *scp, struct tty *tp, int xsize, int ysize,
 	ysize = info.vi_height/fontsize;
 
     if ((info.vi_width < xsize*8) || (info.vi_height < ysize*fontsize))
+{
+	printf("fontsize error\n");
 	return EINVAL;
-
+}
     if (!sc_support_pixel_mode(&info))
-	return ENODEV;
-
+{
+	printf("no support sc_pixel?\n");
+//	return ENODEV;
+}
     /* stop screen saver, etc */
     s = spltty();
     if ((error = sc_clean_up(scp))) {
@@ -662,7 +670,9 @@ sc_vid_ioctl(struct tty *tp, u_long cmd, caddr_t data, struct thread *td)
     case SW_PC98_80x30:
 #endif
 	if (!(adp->va_flags & V_ADP_MODECHANGE))
- 	    return ENODEV;
+{	printf("why?\n");
+// 	    return ENODEV;
+}
 	return sc_set_text_mode(scp, tp, cmd & 0xff, 0, 0, 0, 0);
 
     /* GRAPHICS MODES */
@@ -675,6 +685,7 @@ sc_vid_ioctl(struct tty *tp, u_long cmd, caddr_t data, struct thread *td)
     /* PC98 GRAPHICS MODES */
     case SW_PC98_EGC640x400:	case SW_PC98_PEGC640x400:
     case SW_PC98_PEGC640x480:
+    case SW_PC98_PEGC640x481:
 #endif
 	if (!(adp->va_flags & V_ADP_MODECHANGE))
 	    return ENODEV;

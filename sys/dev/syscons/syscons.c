@@ -30,7 +30,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__FBSDID("$FreeBSD: releng/11.4/sys/dev/syscons/syscons.c 331722 2018-03-29 02:50:57Z eadler $");
 
 #include "opt_compat.h"
 #include "opt_syscons.h"
@@ -593,8 +593,8 @@ sc_attach_unit(int unit, int flags)
 	sc_console = scp;
 
 #ifdef SC_PIXEL_MODE
-    if ((sc->config & SC_VESAMODE) != 0)
-	sc_set_vesa_mode(scp, sc, unit);
+//    if ((sc->config & SC_VESAMODE) != 0)
+//	sc_set_vesa_mode(scp, sc, unit);
 #endif /* SC_PIXEL_MODE */
 
     /* initialize cursor */
