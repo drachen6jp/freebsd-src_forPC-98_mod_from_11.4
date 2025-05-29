@@ -25,7 +25,7 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
- * $FreeBSD$
+ * $FreeBSD: releng/11.4/sys/pc98/cbus/pckbd.c 298352 2016-04-20 15:45:55Z pfg $
  */
 
 #include "opt_compat.h"
@@ -69,6 +69,7 @@ static devclass_t	pckbd_devclass;
 
 static int		pckbdprobe(device_t dev);
 static int		pckbdattach(device_t dev);
+static int		pckbddetach(device_t dev);
 static int		pckbdresume(device_t dev);
 static void		pckbd_isa_intr(void *arg);
 
@@ -76,6 +77,7 @@ static device_method_t pckbd_methods[] = {
 	/* Device interface */
 	DEVMETHOD(device_probe,		pckbdprobe),
 	DEVMETHOD(device_attach,	pckbdattach),
+	DEVMETHOD(device_detach,	pckbddetach),
 	DEVMETHOD(device_resume,	pckbdresume),
 	{ 0, 0 }
 };
@@ -96,7 +98,10 @@ static int		pckbd_attach_unit(device_t dev, keyboard_t **kbd,
 					  int port, int irq, int flags);
 static timeout_t	pckbd_timeout;
 
-
+static struct isa_pnp_id pc98kbd_ids[] = {
+	{ 0x0303d041, "Keyboard controller(PNP)" },
+	{ 0 }
+};
 static int
 pckbdprobe(device_t dev)
 {
@@ -104,8 +109,10 @@ pckbdprobe(device_t dev)
 	int error, rid;
 
 	/* Check isapnp ids */
-	if (isa_get_vendorid(dev))
-		return (ENXIO);
+//	if (isa_get_vendorid(dev))
+//		return (ENXIO);
+	if (ISA_PNP_PROBE(device_get_parent(dev), dev, pc98kbd_ids) == ENXIO)
+		return ENXIO;
 
 	device_set_desc(dev, "PC-98 Keyboard");
 
@@ -114,7 +121,11 @@ pckbdprobe(device_t dev)
 				  RF_ACTIVE);
 	if (res == NULL)
 		return ENXIO;
-	isa_load_resourcev(res, pckbd_iat, 2);
+
+	if(isa_load_resourcev(res, pckbd_iat, 2)){
+			bus_release_resource(dev, SYS_RES_IOPORT, rid, res);
+			return ENXIO;
+	}
 
 	error = pckbd_probe_unit(dev,
 				 isa_get_port(dev),
@@ -152,6 +163,11 @@ pckbdattach(device_t dev)
 		return ENXIO;
 	bus_setup_intr(dev, res, INTR_TYPE_TTY, NULL, pckbd_isa_intr, kbd, &ih);
 
+	return 0;
+}
+
+static int
+pckbddetach(device_t dev){
 	return 0;
 }
 

@@ -26,7 +26,7 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- * $FreeBSD$
+ * $FreeBSD: releng/11.4/sys/pc98/cbus/sio.c 296137 2016-02-27 03:38:01Z jhibbits $
  *	from: @(#)com.c	7.5 (Berkeley) 5/16/91
  *	from: i386/isa sio.c,v 1.234
  */
@@ -749,6 +749,10 @@ siodetach(device_t dev)
 	free(com, M_DEVBUF);
 	return (0);
 }
+tatic struct isa_pnp_id siopc98_ids[] = {
+	{ 0x0215a3b8, "NEC RS-232C old port" }, /* RS-232C */
+	{ 0 }
+};
 
 int
 sioprobe(dev, xrid, rclk, noprobe)
@@ -789,6 +793,8 @@ sioprobe(dev, xrid, rclk, noprobe)
 
 	rid = xrid;
 #ifdef PC98
+	if (ISA_PNP_PROBE(device_get_parent(dev), dev, siopc98_ids) ==ENXIO)
+		return ENXIO;
 	if (IS_8251(iod.if_type)) {
 		port = bus_alloc_resource_any(dev, SYS_RES_IOPORT, &rid,
 					      RF_ACTIVE);
