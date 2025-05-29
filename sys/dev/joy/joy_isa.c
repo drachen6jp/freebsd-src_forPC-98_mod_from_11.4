@@ -28,7 +28,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__FBSDID("$FreeBSD: releng/11.4/sys/dev/joy/joy_isa.c 331722 2018-03-29 02:50:57Z eadler $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -57,6 +57,7 @@ static struct isa_pnp_id joy_ids[] = {
     {0x2fb0d041, "Generic PnP Joystick"},	/* PNPb02f */
     {0x2200a865, "YMH0022 PnP Joystick"},	/* YMH0022 */
     {0x82719304, NULL},    			/* ADS7182 */
+    {0x8418a3b8, "NEC Canbe Joystick"},		/* NEC1884 */
     {0}
 };
 
