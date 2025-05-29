@@ -33,7 +33,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__FBSDID("$FreeBSD: releng/11.4/sys/pc98/cbus/cbus_dma.c 263379 2014-03-19 21:03:04Z imp $");
 
 /*
  * code to manage AT bus
@@ -65,6 +65,7 @@ __FBSDID("$FreeBSD$");
 #include <pc98/cbus/cbus_dmareg.h>
 
 static int isa_dmarangecheck(caddr_t va, u_int length, int chan);
+static int isa_dmarangecheck24(caddr_t va, u_int length, int chan);
 
 static caddr_t	dma_bouncebuf[4];
 static u_int	dma_bouncebufsize[4];
@@ -74,12 +75,17 @@ static u_int8_t	dma_inuse = 0;		/* User for acquire/release */
 static u_int8_t dma_auto_mode = 0;
 static struct mtx isa_dma_lock;
 MTX_SYSINIT(isa_dma_lock, &isa_dma_lock, "isa DMA lock", MTX_DEF);
-
 #define VALID_DMA_MASK (3)
 
 /* high byte of address is stored in this port for i-th dma channel */
 static int dmapageport[4] = { 0x27, 0x21, 0x23, 0x25 };
+static int dmapageport32[4] = { 0xe05, 0xe07, 0xe09, 0xe0b };
 
+#include <sys/sysctl.h>
+static int under16 = 1;
+static int dmabouncebufchan = 0;
+SYSCTL_INT(_machdep, OID_AUTO, dma_under16, CTLFLAG_RWTUN, &under16, 0,
+	"PC-98 DMA use only under16MB");
 /*
  * Setup a DMA channel's bounce buffer.
  */
@@ -87,21 +93,39 @@ int
 isa_dma_init(int chan, u_int bouncebufsize, int flag)
 {
 	void *buf;
-
+	buf = NULL;
+	vm_paddr_t phys;
 #ifdef DIAGNOSTIC
 	if (chan & ~VALID_DMA_MASK)
 		panic("isa_dma_init: channel out of range");
 	if (dma_bouncebuf[chan] != NULL)
 		panic("isa_dma_init: impossible request"); 
 #endif
-
-
+	if (inb(dmapageport32[chan]) == 0xff) goto only_under16;
+	if(!(flag & 0x8000))goto over16;//no bouncebuffer for PCM & FDC
+only_under16:
 	/* Try malloc() first.  It works better if it works. */
 	buf = malloc(bouncebufsize, M_DEVBUF, flag);
 	if (buf != NULL) {
-		if (isa_dmarangecheck(buf, bouncebufsize, chan) != 0) {
+		if (isa_dmarangecheck24(buf, bouncebufsize, chan) != 0) {
+			phys = trunc_page(pmap_extract(kernel_pmap, (vm_offset_t)buf));
 			free(buf, M_DEVBUF);
 			buf = NULL;
+//			printf("malloc miss DMA bouncebuf\n");
+		}
+	}
+
+	if (buf == NULL) {
+		buf = contigmalloc(bouncebufsize, M_DEVBUF, flag, 0ul, 0x09fffful,
+			   1ul, chan & 4 ? 0x20000ul : 0x10000ul);
+	}
+
+	if (buf != NULL) {
+		if (isa_dmarangecheck24(buf, bouncebufsize, chan) != 0) {
+			phys = trunc_page(pmap_extract(kernel_pmap, (vm_offset_t)buf));
+			free(buf, M_DEVBUF);
+			buf = NULL;
+//			printf("contigmalloc miss DMA bouncebuf\n");
 		}
 	}
 
@@ -110,15 +134,90 @@ isa_dma_init(int chan, u_int bouncebufsize, int flag)
 			   1ul, chan & 4 ? 0x20000ul : 0x10000ul);
 	}
 
-	if (buf == NULL)
-		return (ENOMEM);
+	if (buf != NULL) {
+		if (isa_dmarangecheck24(buf, bouncebufsize, chan) != 0) {
+			phys = trunc_page(pmap_extract(kernel_pmap, (vm_offset_t)buf));
+			free(buf, M_DEVBUF);
+			buf = NULL;
+//			printf("contigmalloc miss DMA bouncebuf\n");
+		}
+	}
 
+	if (buf == NULL){
+		printf("DMA buffer not allocated\n");
+		return (ENOMEM);
+	}
+	phys = trunc_page(pmap_extract(kernel_pmap, (vm_offset_t)buf));
+	printf("DMA bouncebuffer allocated at %x chan %x size %x under16 %x\n",phys,chan,bouncebufsize,under16);
 	mtx_lock(&isa_dma_lock);
 
 	dma_bouncebufsize[chan] = bouncebufsize;
 	dma_bouncebuf[chan] = buf;
 
 	mtx_unlock(&isa_dma_lock);
+
+	return (0);
+
+over16:
+	dma_bouncebufsize[chan] = 0;
+	dma_bouncebuf[chan] = NULL;
+	return (0);
+
+}
+
+int
+isa_dma_init16(int chan, u_int bouncebufsize, int flag)
+{
+	void *buf;
+	buf = NULL;
+	vm_paddr_t phys;
+#ifdef DIAGNOSTIC
+	if (chan & ~VALID_DMA_MASK)
+		panic("isa_dma_init: channel out of range");
+	if (dma_bouncebuf[chan] != NULL)
+		panic("isa_dma_init: impossible request"); 
+#endif
+
+	if (inb(dmapageport32[chan]) == 0xff) goto only_under16B;
+	if(!(flag & 0x8000))under16 = 1;
+	else under16 = 0;//innner DMA can over 16bit address but paging problem
+only_under16B:
+	/* Try malloc() first.  It works better if it works. */
+	buf = malloc(bouncebufsize, M_DEVBUF, flag);
+	if (buf != NULL) {
+		if (isa_dmarangecheck24(buf, bouncebufsize, chan) != 0) {
+			phys = trunc_page(pmap_extract(kernel_pmap, (vm_offset_t)buf));
+			free(buf, M_DEVBUF);
+			buf = NULL;
+//			printf("malloc miss DMA bouncebuf\n");
+		}
+	}
+
+	if (buf == NULL) {
+		buf = contigmalloc(bouncebufsize, M_DEVBUF, flag, 0ul, 0x0ffffful,
+			   1ul, chan & 4 ? 0x20000ul : 0x10000ul);
+	}
+	if (buf != NULL) {
+		if (isa_dmarangecheck24(buf, bouncebufsize, chan) != 0) {
+			phys = trunc_page(pmap_extract(kernel_pmap, (vm_offset_t)buf));
+			free(buf, M_DEVBUF);
+			buf = NULL;
+//			printf("contigmalloc miss DMA bouncebuf\n");
+		}
+	}
+	if (buf == NULL){
+		printf("DMA buffer not allocated\n");
+		return (ENOMEM);
+	}
+	phys = trunc_page(pmap_extract(kernel_pmap, (vm_offset_t)buf));
+	printf("DMA bouncebuffer allocated at %x chan %x size %x\n",phys,chan,bouncebufsize);
+	mtx_lock(&isa_dma_lock);
+
+	dma_bouncebufsize[chan] = bouncebufsize;
+	dma_bouncebuf[chan] = buf;
+
+	mtx_unlock(&isa_dma_lock);
+	dmabouncebufchan |= 1<<chan;
 
 	return (0);
 }
@@ -184,6 +283,27 @@ isa_dma_release(chan)
 	mtx_unlock(&isa_dma_lock);
 }
 
+
+void
+isa_dmabankselect(caddr_t addr, int chan){
+	vm_paddr_t phys;
+	int waport;
+	phys = pmap_extract(kernel_pmap, (vm_offset_t)addr);
+	mtx_lock(&isa_dma_lock);
+
+	if (need_pre_dma_flush){
+		wbinvd();		/* wbinvd (WB cache flush) */
+//		outb(0x43f,0xa0);	/* PC-98 cache flush IO */
+	}
+	waport =  DMA1_CHN(chan);
+//	printf("DMA addr use at %x on chan %d \n",phys,chan);
+	outb(waport, phys);
+	outb(waport, phys>>8);
+	outb(dmapageport[chan], phys>>16);
+	outb(dmapageport32[chan], phys>>24);
+	mtx_unlock(&isa_dma_lock);
+}
+
 /*
  * isa_dmastart(): program 8237 DMA controller channel, avoid page alignment
  * problems by using a bounce buffer.
@@ -226,11 +346,19 @@ isa_dmastart(int flags, caddr_t addr, u_int nbytes, int chan)
 #endif
 
 	dma_busy |= (1 << chan);
-
+#if 1
 	if (dma_range_checked) {
+//		printf("bounce addr use at %x size %x\n",phys,nbytes);
 		if (dma_bouncebuf[chan] == NULL
-		    || dma_bouncebufsize[chan] < nbytes)
-			panic("isa_dmastart: bad bounce buffer"); 
+		    || dma_bouncebufsize[chan] < nbytes){
+				if (dma_bouncebuf[chan] == NULL){
+					printf("bounce buffer NULL chan %x\n",chan);
+					goto nobounce;
+				}
+		    		if (dma_bouncebufsize[chan] < nbytes)
+					printf("bounce buffer size small\n");
+			panic("isa_dmastart: bad bounce buffer");
+		}
 		dma_bounced |= (1 << chan);
 		newaddr = dma_bouncebuf[chan];
 
@@ -238,17 +366,23 @@ isa_dmastart(int flags, caddr_t addr, u_int nbytes, int chan)
 		if (!(flags & ISADMA_READ))
 			bcopy(addr, newaddr, nbytes);
 		addr = newaddr;
+	phys = pmap_extract(kernel_pmap, (vm_offset_t)addr);
+//	printf("bounce addr use at %x size %x\n",phys,nbytes);
+		outb(0x5f,0);//wait need?
 	}
-
+#endif
+goto nobounce;
+nobounce:
 	if (flags & ISADMA_RAW) {
 	    dma_auto_mode |= (1 << chan);
 	} else { 
 	    dma_auto_mode &= ~(1 << chan);
 	}
 
-	if (need_pre_dma_flush)
+	if (need_pre_dma_flush){
 		wbinvd();		/* wbinvd (WB cache flush) */
-
+//		outb(0x43f,0xa0);	/* PC-98 cache flush IO */
+	}
 	/* set dma channel mode, and reset address ff */
 
 	/* If ISADMA_RAW flag is set, then use autoinitialise mode */
@@ -267,9 +401,11 @@ isa_dmastart(int flags, caddr_t addr, u_int nbytes, int chan)
 
 	/* send start address */
 	waport =  DMA1_CHN(chan);
+//	printf("DMA addr use at %x size %x on chan %d \n",phys,nbytes,chan);
 	outb(waport, phys);
 	outb(waport, phys>>8);
 	outb(dmapageport[chan], phys>>16);
+	outb(dmapageport32[chan], phys>>24);
 
 	/* send count */
 	outb(waport + 2, --nbytes);
@@ -284,11 +420,12 @@ isa_dmastart(int flags, caddr_t addr, u_int nbytes, int chan)
 void
 isa_dmadone(int flags, caddr_t addr, int nbytes, int chan)
 {  
-
 	if (flags & ISADMA_READ) {
 		/* cache flush only after reading 92/12/9 by A.Kojima */
-		if (need_post_dma_flush)
+		if (need_post_dma_flush){
 			invd();
+//			outb(0x43f,0xa0);
+		}
 	}
 
 #ifdef DIAGNOSTIC
@@ -305,7 +442,7 @@ isa_dmadone(int flags, caddr_t addr, int nbytes, int chan)
 		printf("isa_dmadone: channel %d not busy\n", chan);
 
 	if ((dma_auto_mode & (1 << chan)) == 0)
-		outb(DMA1_SMSK, (chan & 3) | 4);
+		outb(DMA1_SMSK, (chan & 3) | 4);//automode for PCM
 
 	if (dma_bounced & (1 << chan)) {
 		/* copy bounce buffer on read */
@@ -326,23 +463,20 @@ isa_dmadone(int flags, caddr_t addr, int nbytes, int chan)
  */
 
 static int
-isa_dmarangecheck(caddr_t va, u_int length, int chan)
+isa_dmarangecheck24(caddr_t va, u_int length, int chan)
 {
 	vm_paddr_t phys, priorpage = 0;
 	vm_offset_t endva;
-	u_int dma_pgmsk = (chan & 4) ?  ~(128*1024-1) : ~(64*1024-1);
+//	u_int dma_pgmsk = (chan & 4) ?  ~(128*1024-1) : ~(64*1024-1);
+	u_int dma_pgmsk = ~(1024*1024-1); //1MiB boundary
 
 	endva = (vm_offset_t)round_page((vm_offset_t)va + length);
 	for (; va < (caddr_t) endva ; va += PAGE_SIZE) {
 		phys = trunc_page(pmap_extract(kernel_pmap, (vm_offset_t)va));
-#ifdef EPSON_BOUNCEDMA
-#define ISARAM_END	0x0f00000
-#else
-#define ISARAM_END	0x1000000
-#endif
+#define ISARAM_END24	 0x1000000
 		if (phys == 0)
 			panic("isa_dmacheck: no physical page present");
-		if (phys >= ISARAM_END)
+		if (phys >= ISARAM_END24)
 			return (1);
 		if (priorpage) {
 			if (priorpage + PAGE_SIZE != phys)
@@ -352,6 +486,56 @@ isa_dmarangecheck(caddr_t va, u_int length, int chan)
 				return (1);
 		}
 		priorpage = phys;
+	}
+	return (0);
+}
+
+static int
+isa_dmarangecheck(caddr_t va, u_int length, int chan)
+{
+	vm_paddr_t phys, priorpage = 0;
+	vm_offset_t endva;
+	u_int dma_pgmsk;
+if(dmabouncebufchan & (1 << chan)){
+	dma_pgmsk = (chan & 4) ?  ~(128*1024-1) : ~(64*1024-1);
+}else{
+	dma_pgmsk = ~(1024*1024-1);//1MiB
+}
+	endva = (vm_offset_t)round_page((vm_offset_t)va + length);
+	for (; va < (caddr_t) endva ; va += PAGE_SIZE) {
+		phys = trunc_page(pmap_extract(kernel_pmap, (vm_offset_t)va));
+#ifdef EPSON_BOUNCEDMA
+#define ISARAM_END	0x0f00000
+#else
+#define ISARAM_END	 0x1000000
+//#define ISARAM_END	0xffffffff
+#endif
+		if (phys == 0)
+			panic("isa_dmacheck: no physical page present");
+		if(under16 || ( dmabouncebufchan & (1<<chan) ) ){
+			if (phys >= ISARAM_END)
+				return (1);
+		}
+#if 1
+		if (priorpage) {
+			if (priorpage + PAGE_SIZE != phys){
+//				printf("bounce use %x %x for PAGING MISS\n",(u_int)priorpage + PAGE_SIZE, (u_int)phys);
+				return (1);
+			}
+			/* check if crossing a DMA page boundary */
+			if (((u_int)priorpage ^ (u_int)phys) & dma_pgmsk){
+//				printf("bounce use for %x 1Mbyte boundary\n",(u_int)phys);
+				return (1);
+			}
+		}
+		priorpage = phys;
+#else
+		/* check if crossing a DMA page boundary */
+		if( ((u_int)endva&0xf000000)-((u_int)va&0xf000000) ){
+//			printf("16M range %x\n",(u_int)endva);
+			return(1);
+		}
+#endif
 	}
 	return (0);
 }
@@ -399,14 +583,14 @@ isa_dmastatus_locked(int chan)
 
 	/* channel active? */
 	if ((dma_inuse & (1 << chan)) == 0) {
-		printf("isa_dmastatus: channel %d not active\n", chan);
+//		printf("isa_dmastatus: channel %d not active\n", chan);
 		return(-1);
 	}
 	/* channel busy? */
 
 	if (((dma_busy & (1 << chan)) == 0) &&
 	    (dma_auto_mode & (1 << chan)) == 0 ) {
-	    printf("chan %d not busy\n", chan);
+//	    printf("chan %d not busy\n", chan);
 	    return -2 ;
 	}	
 	ffport = DMA1_FFC;
@@ -477,10 +661,10 @@ isa_dmastop(int chan)
 		mtx_unlock(&isa_dma_lock);
 		return -2 ;
 	}
-    
-	if ((chan & 4) == 0)
-		outb(DMA1_SMSK, (chan & 3) | 4 /* disable mask */);
-
+//  	if ((dma_auto_mode & (1 << chan)) == 0){
+//		if ((chan & 4) == 0)
+//			outb(DMA1_SMSK, (chan & 3) | 4 /* disable mask */);
+//	}
 	status = isa_dmastatus_locked(chan);
 
 	mtx_unlock(&isa_dma_lock);
