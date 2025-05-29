@@ -26,7 +26,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__FBSDID("$FreeBSD: releng/11.4/sys/i386/i386/bios.c 331722 2018-03-29 02:50:57Z eadler $");
 
 /*
  * Code for dealing with the BIOS in x86 PC systems.
@@ -52,6 +52,7 @@ __FBSDID("$FreeBSD$");
 #include <isa/isavar.h>
 #include <isa/pnpreg.h>
 #include <isa/pnpvar.h>
+#include <compat/x86bios/x86bios.h>
 #endif
 
 #define BIOS_START	0xe0000
@@ -67,6 +68,15 @@ static u_int			bios32_SDCI;
 /* start fairly early */
 static void			bios32_init(void *junk);
 SYSINIT(bios32, SI_SUB_CPU, SI_ORDER_ANY, bios32_init, NULL);
+
+#ifdef PC98
+#include <sys/sysctl.h>
+static int usepcibios = 0;
+static int usepnpbios = 1;
+
+SYSCTL_INT(_machdep, OID_AUTO, usepcibios, CTLFLAG_RWTUN, &usepcibios, 0, "");
+SYSCTL_INT(_machdep, OID_AUTO, usepnpbios, CTLFLAG_RWTUN, &usepnpbios, 0, "");
+#endif
 
 /*
  * bios32_init
@@ -95,6 +105,12 @@ bios32_init(void *junk)
 	for (cv = (u_int8_t *)sdh, ck = 0, i = 0; i < (sdh->len * 16); i++) {
 	    ck += cv[i];
 	}
+#ifdef PC98
+	if (usepcibios == 0){
+		if(ck == 0)printf("PCI BIOS found but disabled\n");
+		ck = -1;
+	}
+#endif
 	/* If checksum is OK, enable use of the entrypoint */
 	if ((ck == 0) && (BIOS_START <= sdh->entry ) &&
 	    (sdh->entry < (BIOS_START + BIOS_SIZE))) {
@@ -133,6 +149,12 @@ bios32_init(void *junk)
 	for (cv = (u_int8_t *)pt, ck = 0, i = 0; i < pt->len; i++) {
 	    ck += cv[i];
 	}
+#ifdef PC98
+	if (usepnpbios == 0){
+		if(ck == 0)printf("PnP BIOS found but disabled\n");
+		ck = -1;
+	}
+#endif
 	/* If checksum is OK, enable use of the entrypoint */
 	if (ck == 0) {
 	    PnPBIOStable = pt;
@@ -460,7 +482,19 @@ bios16(struct bios_args *args, char *fmt, ...)
     bioscall_vector.vec16.offset = (u_short)args->entry;
     bioscall_vector.vec16.segment = GSEL(GBIOSCODE16_SEL, SEL_KPL);
 
+#ifdef PC98
+	int d800bank;
+	d800bank = inb(0x63c);
+	outb(0x63c,2);//pnpbios bank
+#endif
+
     i = bios16_call(&args->r, stack_top);
+
+#ifdef PC98
+	outb(0x63c,d800bank);//bank reset
+#endif
+
+
 
     if (pte == PTmap) {
 	*pte = 0;			/* remove entry */
@@ -637,6 +671,10 @@ pnpbios_identify(driver_t *driver, device_t parent)
     
     if ((error = bios16(&args, PNP_COUNT_DEVNODES, &ndevs, &bigdev)) || (args.r.eax & 0xff)) {
 	printf("pnpbios: error %d/%x getting device count/size limit\n", error, args.r.eax);
+//		x86regs_t regs;
+//		x86bios_init_regs(&regs);
+//		x86bios_intr(&regs,0x1A);
+//	if(regs.R_AX != )
 	return;
     }
     ndevs &= 0xff;				/* clear high byte garbage */

@@ -28,7 +28,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__FBSDID("$FreeBSD: releng/11.4/sys/i386/i386/initcpu.c 348362 2019-05-29 14:28:13Z kib $");
 
 #include "opt_cpu.h"
 
@@ -309,6 +309,7 @@ init_i486_on_386(void)
 	load_cr0(rcr0() & ~(CR0_CD | CR0_NW));	/* CD = 0, NW = 0 */
 
 	intr_restore(saveintr);
+
 }
 #endif
 
@@ -647,7 +648,6 @@ extern int elf32_nxstack;
 void
 initializecpu(void)
 {
-
 	switch (cpu) {
 #ifdef I486_CPU
 	case CPU_BLUE:
@@ -772,6 +772,8 @@ initializecpu(void)
 	if ((amd_feature & AMDID_RDTSCP) != 0 ||
 	    (cpu_stdext_feature2 & CPUID_STDEXT2_RDPID) != 0)
 		wrmsr(MSR_TSC_AUX, PCPU_GET(cpuid));
+
+////load_cr0(rcr0() | CR0_CD);
 }
 
 void
@@ -850,6 +852,8 @@ initializecpucache(void)
 #endif
 	}
 #endif /* PC98 && !CPU_UPGRADE_HW_CACHE */
+//	need_pre_dma_flush = 1;	//always enable;
+//	need_post_dma_flush = 1;
 }
 
 #if defined(I586_CPU) && defined(CPU_WT_ALLOC)
@@ -992,7 +996,6 @@ enable_K6_2_wt_alloc(void)
 	  size = ((Maxmem >> 8) + 3) >> 2;
 	else
 	  size = 0;
-
 	/* Limit is 4092M bytes. */
 	if (size > 0x3fff)
 		size = 0x3ff;
@@ -1022,7 +1025,7 @@ enable_K6_2_wt_alloc(void)
 
 	intr_restore(saveintr);
 }
-#endif /* I585_CPU && CPU_WT_ALLOC */
+#endif /* I586_CPU && CPU_WT_ALLOC */
 
 #include "opt_ddb.h"
 #ifdef DDB

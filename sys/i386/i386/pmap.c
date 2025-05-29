@@ -75,7 +75,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__FBSDID("$FreeBSD: releng/11.4/sys/i386/i386/pmap.c 351449 2019-08-24 00:35:59Z jhb $");
 
 /*
  *	Manages physical address maps.
@@ -644,8 +644,10 @@ pmap_init_pat(void)
 	}
 
 	/* Disable PGE. */
+	if(cpu_feature & CPUID_PGE){
 	cr4 = rcr4();
 	load_cr4(cr4 & ~CR4_PGE);
+	}
 
 	/* Disable caches (CD = 1, NW = 0). */
 	cr0 = rcr0();
@@ -666,7 +668,9 @@ pmap_init_pat(void)
 
 	/* Restore caches and PGE. */
 	load_cr0(cr0);
+	if(cpu_feature & CPUID_PGE){
 	load_cr4(cr4);
+	}
 }
 
 /*

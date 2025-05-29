@@ -24,7 +24,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__FBSDID("$FreeBSD: releng/11.4/sys/i386/i386/mp_machdep.c 347700 2019-05-16 14:42:16Z markj $");
 
 #include "opt_apic.h"
 #include "opt_cpu.h"
@@ -231,7 +231,7 @@ init_secondary(void)
 	myid = bootAP;
 
 	/* Update microcode before doing anything else. */
-	ucode_load_ap(myid);
+//	ucode_load_ap(myid);
 
 	/* Get per-cpu data */
 	pc = &__pcpu[myid];

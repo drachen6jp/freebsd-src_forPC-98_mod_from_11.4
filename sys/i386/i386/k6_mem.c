@@ -25,7 +25,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__FBSDID("$FreeBSD: releng/11.4/sys/i386/i386/k6_mem.c 331722 2018-03-29 02:50:57Z eadler $");
 
 #include <sys/param.h>
 #include <sys/kernel.h>
@@ -79,6 +79,9 @@ k6_mrmake(struct mem_range_desc *desc, u_int32_t *mtrr)
 {
 	u_int32_t len = 0, wc, uc;
 	int bit;
+	printf("k6_mrmake flags %x\n",desc->mr_flags);
+	printf("k6_mrmake base %llx size %llx\n",desc->mr_base,desc->mr_len);
+	printf("powerof2() %x\n",powerof2(desc->mr_len));
 
 	if (desc->mr_base &~ 0xfffe0000)
 		return (EINVAL);
@@ -93,6 +96,7 @@ k6_mrmake(struct mem_range_desc *desc, u_int32_t *mtrr)
 	uc = (desc->mr_flags & MDF_UNCACHEABLE) ? 1 : 0;
 
 	*mtrr = K6_REG_MAKE(desc->mr_base, len, wc, uc);
+	printf("k6_mrmake base %llx size %llx wc %x uc %x\n",desc->mr_base,desc->mr_len,wc,uc);
 	return (0);
 }
 
@@ -132,6 +136,7 @@ k6_mrset(struct mem_range_softc *sc, struct mem_range_desc *desc, int *arg)
 	u_int64_t reg;
 	u_int32_t mtrr;
 	int error, d;
+	printf("K6-family MTRR set %x\n", *arg);
 
 	switch (*arg) {
 	case MEMRANGE_SET_UPDATE:
@@ -169,7 +174,7 @@ out:
 	wrmsr(UWCCR, reg);
 	wbinvd();
 	enable_intr();
-
+	printf("K6-family MTRR support enabled (%llx registers)\n", rdmsr(UWCCR));
 	return (0);
 }
 
