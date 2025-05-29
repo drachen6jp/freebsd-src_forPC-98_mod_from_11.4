@@ -26,7 +26,7 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- * $FreeBSD$
+ * $FreeBSD: releng/11.4/sys/i386/include/cpufunc.h 331722 2018-03-29 02:50:57Z eadler $
  */
 
 /*
@@ -259,9 +259,17 @@ insl(u_int port, void *addr, size_t count)
 }
 
 static __inline void
+outb(u_int port, u_char data)
+{
+	__asm __volatile("outb %0, %w1" : : "a" (data), "Nd" (port));
+}
+
+
+static __inline void
 invd(void)
 {
 	__asm __volatile("invd");
+//	outb(0x43f,0xa0);
 }
 
 static __inline u_short
@@ -272,13 +280,13 @@ inw(u_int port)
 	__asm __volatile("inw %w1, %0" : "=a" (data) : "Nd" (port));
 	return (data);
 }
-
+/*
 static __inline void
 outb(u_int port, u_char data)
 {
 	__asm __volatile("outb %0, %w1" : : "a" (data), "Nd" (port));
 }
-
+*/
 static __inline void
 outl(u_int port, u_int data)
 {
@@ -379,6 +387,7 @@ static __inline void
 wbinvd(void)
 {
 	__asm __volatile("wbinvd");
+//	outb(0x43f,0xa0);
 }
 
 static __inline void
