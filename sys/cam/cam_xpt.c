@@ -28,7 +28,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__FBSDID("$FreeBSD: releng/11.4/sys/cam/cam_xpt.c 350804 2019-08-08 22:16:19Z mav $");
 
 #include <sys/param.h>
 #include <sys/bus.h>
@@ -1109,6 +1109,7 @@ xpt_denounce_periph(struct cam_periph *periph)
 int
 xpt_getattr(char *buf, size_t len, const char *attr, struct cam_path *path)
 {
+	int over16 = 0;
 	int ret = -1, l, o;
 	struct ccb_dev_advinfo cdai;
 	struct scsi_vpd_device_id *did;
@@ -1131,7 +1132,12 @@ xpt_getattr(char *buf, size_t len, const char *attr, struct cam_path *path)
 		 strcmp(attr, "GEOM::lunname") == 0) {
 		cdai.buftype = CDAI_TYPE_SCSI_DEVID;
 		cdai.bufsiz = CAM_SCSI_DEVID_MAXLEN;
-		cdai.buf = malloc(cdai.bufsiz, M_CAMXPT, M_NOWAIT);
+//mamory allocate for local DMA
+		cdai.buf = contigmalloc(cdai.bufsiz, M_CAMXPT, M_NOWAIT, 0ul,0xfffffful, 1ul,0x1000000ul);
+		if (cdai.buf == NULL){
+			over16 = 1;
+			cdai.buf = malloc(cdai.bufsiz, M_CAMXPT, M_NOWAIT);
+		}
 		if (cdai.buf == NULL) {
 			ret = ENOMEM;
 			goto out;
@@ -1224,8 +1230,12 @@ xpt_getattr(char *buf, size_t len, const char *attr, struct cam_path *path)
 	}
 
 out:
-	if ((char *)cdai.buf != buf)
-		free(cdai.buf, M_CAMXPT);
+	if ((char *)cdai.buf != buf){
+		if (over16)
+			free(cdai.buf, M_CAMXPT);
+		else
+			contigfree(cdai.buf, cdai.bufsiz, M_CAMXPT);
+	}
 	return ret;
 }
 
