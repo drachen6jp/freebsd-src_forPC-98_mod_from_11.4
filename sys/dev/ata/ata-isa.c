@@ -25,7 +25,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__FBSDID("$FreeBSD: releng/11.4/sys/dev/ata/ata-isa.c 331722 2018-03-29 02:50:57Z eadler $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -47,12 +47,14 @@ __FBSDID("$FreeBSD$");
 
 /* local vars */
 static struct isa_pnp_id ata_ids[] = {
+#ifndef PC98
     {0x0006d041,        "Generic ESDI/IDE/ATA controller"},     /* PNP0600 */
     {0x0106d041,        "Plus Hardcard II"},                    /* PNP0601 */
     {0x0206d041,        "Plus Hardcard IIXL/EZ"},               /* PNP0602 */
     {0x0306d041,        "Generic ATA"},                         /* PNP0603 */
 								/* PNP0680 */
     {0x8006d041,        "Standard bus mastering IDE hard disk controller"},
+#endif
     {0}
 };
 

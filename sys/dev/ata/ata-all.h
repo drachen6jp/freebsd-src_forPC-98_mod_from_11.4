@@ -173,7 +173,7 @@
 
 #define ATA_IDX_ADDR                    22
 #define ATA_IDX_DATA                    23
-#define ATA_MAX_RES                     24
+#define ATA_MAX_RES                     25
 
 /* misc defines */
 #define ATA_PRIMARY                     0x1f0
@@ -188,9 +188,9 @@
 #define ATA_CTLADDR_RID                 1
 #define ATA_BMADDR_RID                  0x20
 #define ATA_PC98_CTLADDR_RID            8
-#define ATA_PC98_BANKADDR_RID           9
+#define ATA_PC98_BANKADDR_RID           24
 #define ATA_IRQ_RID                     0
-#define ATA_DEV(unit)                   ((unit > 0) ? 0x10 : 0)
+#define ATA_DEV(unit)                   ((unit & 1) ? 0x10 : 0)
 #define ATA_CFA_MAGIC1                  0x844A
 #define ATA_CFA_MAGIC2                  0x848A
 #define ATA_CFA_MAGIC3                  0x8400
@@ -423,14 +423,20 @@ struct ata_channel {
 #define         ATA_KNOWN_PRESENCE	0x200
 #define         ATA_STATUS_IS_LONG	0x400
 #define         ATA_PERIODIC_POLL	0x800
+#define		ATA_PC98_SECONDARY	0x1000
 
     int				pm_level;	/* power management level */
     int                         devices;        /* what is present */
 #define         ATA_ATA_MASTER          0x00000001
 #define         ATA_ATA_SLAVE           0x00000002
+#define		ATA_ATA_MASTER1		0x00000004
+#define		ATA_ATA_SLAVE1		0x00000008
 #define         ATA_PORTMULTIPLIER      0x00008000
 #define         ATA_ATAPI_MASTER        0x00010000
 #define         ATA_ATAPI_SLAVE         0x00020000
+#define         ATA_ATAPI_MASTER1       0x00040000
+#define         ATA_ATAPI_SLAVE1        0x00080000
+
 
     struct mtx                  state_mtx;      /* state lock */
     int                         state;          /* ATA channel state */
@@ -503,6 +509,9 @@ int ata_sata_setmode(device_t dev, int target, int mode);
 int ata_sata_getrev(device_t dev, int target);
 int ata_request2fis_h2d(struct ata_request *request, u_int8_t *fis);
 void ata_pm_identify(device_t dev);
+
+/* ata-cbus.c */
+void pc98secondary_check(struct ata_request *request);
 
 MALLOC_DECLARE(M_ATA);
 

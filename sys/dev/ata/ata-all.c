@@ -200,6 +200,7 @@ ata_attach(device_t dev)
 		error = ENXIO;
 		goto err3;
 	}
+
 	mtx_unlock(&ch->state_mtx);
 	return (0);
 
@@ -716,6 +717,7 @@ ata_timeout(struct ata_request *request)
 	 */
 	if (ch->state == ATA_ACTIVE) {
 		request->flags |= ATA_R_TIMEOUT;
+printf("ata timeout called\n");
 		if (ch->dma.unload)
 			ch->dma.unload(request);
 		ch->running = NULL;
@@ -739,6 +741,7 @@ ata_cam_begin_transaction(device_t dev, union ccb *ccb)
 	request->parent = dev;
 	request->unit = ccb->ccb_h.target_id;
 	if (ccb->ccb_h.func_code == XPT_ATA_IO) {
+//	if ( (ccb->ccb_h.func_code == XPT_ATA_IO) && (ccb->ccb_h.target_lun == 0) ){
 		request->data = ccb->ataio.data_ptr;
 		request->bytecount = ccb->ataio.dxfer_len;
 		request->u.ata.command = ccb->ataio.cmd.command;
@@ -783,6 +786,9 @@ ata_cam_begin_transaction(device_t dev, union ccb *ccb)
 		    ccb->csio.cdb_io.cdb_ptr : ccb->csio.cdb_io.cdb_bytes,
 		    request->u.atapi.ccb, ccb->csio.cdb_len);
 		request->flags |= ATA_R_ATAPI;
+//printf("atapi cmd ccb[0] %x ccb[1] = %x ccb->ccb_h.target_lun %llu\n",request->u.atapi.ccb[0],request->u.atapi.ccb[1],ccb->ccb_h.target_lun);
+//		if(request->u.atapi.ccb[0] == 0x12)//inquiry for PD
+//				request->u.atapi.ccb[1] |= ccb->ccb_h.target_lun << 5;
 		if (ch->curr[ccb->ccb_h.target_id].atapi == 16)
 			request->flags |= ATA_R_ATAPI16;
 		if ((ccb->ccb_h.flags & CAM_DIR_MASK) != CAM_DIR_NONE &&
@@ -809,6 +815,7 @@ ata_cam_begin_transaction(device_t dev, union ccb *ccb)
 	    ata_cam_end_transaction(dev, request);
 	    return;
 	}
+
 }
 
 static void
@@ -951,17 +958,29 @@ static int
 ata_check_ids(device_t dev, union ccb *ccb)
 {
 	struct ata_channel *ch = device_get_softc(dev);
-
+ if(!(ch->flags & ATA_PC98_SECONDARY)){
 	if (ccb->ccb_h.target_id > ((ch->flags & ATA_NO_SLAVE) ? 0 : 1)) {
 		ccb->ccb_h.status = CAM_TID_INVALID;
+		ch->flags |= ATA_USE_16BIT;
+		printf("please check dword transfer settings. need 'atacbus.0.flags=0x80000000'\n");
+
 		xpt_done(ccb);
 		return (-1);
 	}
+#if 0
 	if (ccb->ccb_h.target_lun != 0) {
 		ccb->ccb_h.status = CAM_LUN_INVALID;
 		xpt_done(ccb);
 		return (-1);
 	}
+#endif
+// }else if(ccb->ccb_h.target_id > 3){
+ 	if(ccb->ccb_h.target_id > 3){
+		ccb->ccb_h.status = CAM_TID_INVALID;
+		xpt_done(ccb);
+		return (-1);
+	}
+ }
 	/*
 	 * It's a programming error to see AUXILIARY register requests.
 	 */
@@ -1001,14 +1020,14 @@ ataaction(struct cam_sim *sim, union ccb *ccb)
 			struct ata_res *res = &ccb->ataio.res;
 			
 			bzero(res, sizeof(*res));
-			if (ch->devices & (ATA_ATA_MASTER << ccb->ccb_h.target_id)) {
+			if (ch->devices & (ATA_ATA_MASTER << ccb->ccb_h.target_id) ) {
 				res->lba_high = 0;
 				res->lba_mid = 0;
 			} else {
 				res->lba_high = 0xeb;
 				res->lba_mid = 0x14;
 			}
-			ccb->ccb_h.status = CAM_REQ_CMP;
+		ccb->ccb_h.status = CAM_REQ_CMP;
 			break;
 		}
 		ata_cam_begin_transaction(dev, ccb);
@@ -1156,7 +1175,12 @@ ataaction(struct cam_sim *sim, union ccb *ccb)
 			cpi->max_target = 0;
 		else
 			cpi->max_target = 1;
-		cpi->max_lun = 0;
+
+		if (ch->flags & ATA_PC98_SECONDARY)
+			cpi->max_target = 3;
+//		cpi->max_lun = 0;
+		cpi->max_lun = 6;//PD or CD changer use LUN
+
 		cpi->initiator_id = 0;
 		cpi->bus_id = cam_sim_bus(sim);
 		if (ch->flags & ATA_SATA)

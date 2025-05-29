@@ -62,6 +62,11 @@ struct ata_cbus_controller {
 /* local prototypes */
 static void ata_cbus_intr(void *);
 
+static struct isa_pnp_id atacbus_ids[] = {
+	{ 0x0006d041, "PC-9800 near IDE controller" },
+	{ 0 }
+};
+
 static int
 ata_cbus_probe(device_t dev)
 {
@@ -70,8 +75,10 @@ ata_cbus_probe(device_t dev)
     rman_res_t tmp;
 
     /* dont probe PnP devices */
-    if (isa_get_vendorid(dev))
-	return (ENXIO);
+//    if (isa_get_vendorid(dev))
+//	return (ENXIO);
+    if (ISA_PNP_PROBE(device_get_parent(dev), dev, atacbus_ids) == ENXIO)
+	return ENXIO;
 
     /* allocate the ioport range */
     rid = ATA_IOADDR_RID;
@@ -85,7 +92,6 @@ ata_cbus_probe(device_t dev)
 	bus_set_resource(dev, SYS_RES_IOPORT, rid,
 			 rman_get_start(io)+ATA_PC98_CTLOFFSET, ATA_CTLIOSIZE);
     }
-
     /* calculate & set the bank range */
     rid = ATA_PC98_BANKADDR_RID;
     if (bus_get_resource(dev, SYS_RES_IOPORT, rid, &tmp, &tmp)) {
@@ -152,7 +158,7 @@ ata_cbus_attach(device_t dev)
 
 	/* Work around the lack of channel serialization in ATA_CAM. */
 	ctlr->channels = 1;
-	device_printf(dev, "second channel ignored\n");
+//	device_printf(dev, "second channel ignored\n");
 
     for (unit = 0; unit < ctlr->channels; unit++) {
 	child = device_add_child(dev, "ata", unit);
@@ -179,6 +185,8 @@ ata_cbus_alloc_resource(device_t dev, device_t child, int type, int *rid,
 	    return ctlr->io;
 	case ATA_CTLADDR_RID:
 	    return ctlr->ctlio;
+	case ATA_PC98_BANKADDR_RID:
+	    return ctlr->bankio;
 	}
     }
     if (type == SYS_RES_IRQ)
@@ -208,11 +216,11 @@ ata_cbus_setup_intr(device_t dev, device_t child, struct resource *irq,
 static int
 ata_cbus_print_child(device_t dev, device_t child)
 {
-    struct ata_channel *ch = device_get_softc(child);
+ //   struct ata_channel *ch = device_get_softc(child);
     int retval = 0;
 
     retval += bus_print_child_header(dev, child);
-    retval += printf(" at bank %d", ch->unit);
+    retval += printf(" at bank %d", (int)(intptr_t)device_get_ivars(child));
     retval += bus_print_child_footer(dev, child);
     return retval;
 }
@@ -286,10 +294,15 @@ ata_cbuschannel_attach(device_t dev)
     ch->r_io[ATA_CONTROL].res = ctlr->ctlio;
     ch->r_io[ATA_CONTROL].offset = 0;
     ch->r_io[ATA_IDX_ADDR].res = ctlr->io;
-    ata_default_registers(dev);
+    ch->r_io[ATA_PC98_BANKADDR_RID].res = ctlr->bankio;
+    ch->r_io[ATA_PC98_BANKADDR_RID].offset = 0;
 
+    ata_default_registers(dev);
     /* initialize softc for this channel */
-    ch->flags |= ATA_USE_16BIT;
+    if(device_get_flags(device_get_parent(dev)) & 0x80000000)
+	ch->flags |= ATA_USE_16BIT;
+    ch->flags |=ATA_PC98_SECONDARY;
+
     ata_generic_hw(dev);
 
     return ata_attach(dev);

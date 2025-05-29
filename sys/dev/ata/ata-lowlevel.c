@@ -51,6 +51,8 @@ __FBSDID("$FreeBSD$");
 #include <cam/cam.h>
 #include <cam/cam_ccb.h>
 
+#define PC98_DEV(unit)	((unit > 1) ? 1 : 0)
+
 /* prototypes */
 static int ata_generic_status(device_t dev);
 static int ata_wait(struct ata_channel *ch, int unit, u_int8_t);
@@ -84,7 +86,11 @@ ata_begin_transaction(struct ata_request *request)
 {
     struct ata_channel *ch = device_get_softc(request->parent);
     int dummy, error;
-
+	int dw;
+	if(ch->flags & ATA_USE_16BIT) dw = 0;
+	else dw = 8;
+	if(ch->flags & ATA_PC98_SECONDARY)
+		ATA_IDX_OUTB(ch, ATA_PC98_BANKADDR_RID, PC98_DEV(request->unit)|dw);
     ATA_DEBUG_RQ(request, "begin transaction");
 
     /* disable ATAPI DMA writes if HW doesn't support it */
@@ -111,7 +117,6 @@ ata_begin_transaction(struct ata_request *request)
 		request->result = EIO;
 		goto begin_finished;
 	    }
-
 	    /* device reset doesn't interrupt */
 	    if (request->u.ata.command == ATA_DEVICE_RESET) {
 
@@ -244,8 +249,12 @@ int
 ata_end_transaction(struct ata_request *request)
 {
     struct ata_channel *ch = device_get_softc(request->parent);
+	int dw;
+	if(ch->flags & ATA_USE_16BIT) dw = 0;
+	else dw = 8;
+	if(ch->flags & ATA_PC98_SECONDARY)
+		ATA_IDX_OUTB(ch, ATA_PC98_BANKADDR_RID, PC98_DEV(request->unit)|dw);
     int length;
-
     ATA_DEBUG_RQ(request, "end transaction");
 
     /* clear interrupt and get status */
@@ -474,6 +483,149 @@ end_continue:
 }
 
 /* must be called with ATA channel locked and state_mtx held */
+static void
+ata_generic_reset2(device_t dev)
+{
+    struct ata_channel *ch = device_get_softc(dev);
+	if(ATA_IDX_INB(ch,ATA_PC98_BANKADDR_RID) == 0xff) {
+		ch->flags &= ~ATA_PC98_SECONDARY;
+		goto no_secondary;
+	}
+    ATA_IDX_OUTB(ch, ATA_PC98_BANKADDR_RID, 1);
+
+    u_int8_t ostat0 = 0, stat0 = 0, ostat1 = 0, stat1 = 0;
+    u_int8_t err = 0, lsb = 0, msb = 0;
+    int mask = 0, timeout;
+
+    /* do we have any signs of ATA/ATAPI HW being present ? */
+    ATA_IDX_OUTB(ch, ATA_DRIVE, ATA_D_IBM | ATA_D_LBA | ATA_DEV(ATA_MASTER));
+    DELAY(10);
+    ostat0 = ATA_IDX_INB(ch, ATA_STATUS);
+    if (((ostat0 & 0xf8) != 0xf8 || (ch->flags & ATA_KNOWN_PRESENCE)) &&
+	    ostat0 != 0xa5) {
+	stat0 = ATA_S_BUSY;
+	mask |= 0x01;
+    }
+
+    /* in some setups we dont want to test for a slave */
+    if (!(ch->flags & ATA_NO_SLAVE)) {
+	ATA_IDX_OUTB(ch, ATA_DRIVE, ATA_D_IBM | ATA_D_LBA | ATA_DEV(ATA_SLAVE));
+	DELAY(10);      
+	ostat1 = ATA_IDX_INB(ch, ATA_STATUS);
+	if (((ostat1 & 0xf8) != 0xf8 || (ch->flags & ATA_KNOWN_PRESENCE)) &&
+		ostat1 != 0xa5) {
+	    stat1 = ATA_S_BUSY;
+	    mask |= 0x02;
+	}
+    }
+
+    if (bootverbose)
+	device_printf(dev, "reset secondary mask=%02x ostat0=%02x ostat1=%02x\n",
+		      mask, ostat0, ostat1);
+
+    /* if nothing showed up there is no need to get any further */
+    /* XXX SOS is that too strong?, we just might lose devices here */
+//    ch->devices = 0;
+    if (!mask)
+	return;
+
+    /* reset (both) devices on this channel */
+    ATA_IDX_OUTB(ch, ATA_DRIVE, ATA_D_IBM | ATA_D_LBA | ATA_DEV(ATA_MASTER));
+    DELAY(10);
+    ATA_IDX_OUTB(ch, ATA_CONTROL, ATA_A_IDS | ATA_A_RESET);
+    ata_udelay(10000); 
+    ATA_IDX_OUTB(ch, ATA_CONTROL, ATA_A_IDS);
+    ata_udelay(100000);
+    ATA_IDX_INB(ch, ATA_ERROR);
+
+    /* wait for BUSY to go inactive */
+    for (timeout = 0; timeout < 310; timeout++) {
+	if ((mask & 0x01) && (stat0 & ATA_S_BUSY)) {
+	    ATA_IDX_OUTB(ch, ATA_DRIVE, ATA_D_IBM | ATA_DEV(ATA_MASTER));
+	    DELAY(10);
+	    if (ch->flags & ATA_STATUS_IS_LONG)
+		    stat0 = ATA_IDX_INL(ch, ATA_STATUS) & 0xff;
+	    else
+		    stat0 = ATA_IDX_INB(ch, ATA_STATUS);
+	    err = ATA_IDX_INB(ch, ATA_ERROR);
+	    lsb = ATA_IDX_INB(ch, ATA_CYL_LSB);
+	    msb = ATA_IDX_INB(ch, ATA_CYL_MSB);
+	    if (bootverbose)
+		device_printf(dev,
+			      "stat0=0x%02x err=0x%02x lsb=0x%02x msb=0x%02x\n",
+			      stat0, err, lsb, msb);
+	    if (stat0 == err && lsb == err && msb == err &&
+		timeout > (stat0 & ATA_S_BUSY ? 100 : 10))
+		mask &= ~0x01;
+	    if (!(stat0 & ATA_S_BUSY)) {
+		if ((err & 0x7f) == ATA_E_ILI) {
+		    if (lsb == ATAPI_MAGIC_LSB && msb == ATAPI_MAGIC_MSB) {
+			ch->devices |= ATA_ATAPI_MASTER1;
+		    }
+		    else if (lsb == 0 && msb == 0 && (stat0 & ATA_S_READY)) {
+			ch->devices |= ATA_ATA_MASTER1;
+		    }
+		}
+		else if ((stat0 & 0x0f) && err == lsb && err == msb) {
+		    stat0 |= ATA_S_BUSY;
+		}
+	    }
+	}
+
+	if ((mask & 0x02) && (stat1 & ATA_S_BUSY) &&
+	    !((mask & 0x01) && (stat0 & ATA_S_BUSY))) {
+	    ATA_IDX_OUTB(ch, ATA_DRIVE, ATA_D_IBM | ATA_DEV(ATA_SLAVE));
+	    DELAY(10);
+	    if (ch->flags & ATA_STATUS_IS_LONG)
+		    stat1 = ATA_IDX_INL(ch, ATA_STATUS) & 0xff;
+	    else
+		    stat1 = ATA_IDX_INB(ch, ATA_STATUS);
+	    err = ATA_IDX_INB(ch, ATA_ERROR);
+	    lsb = ATA_IDX_INB(ch, ATA_CYL_LSB);
+	    msb = ATA_IDX_INB(ch, ATA_CYL_MSB);
+	    if (bootverbose)
+		device_printf(dev,
+			      "stat1=0x%02x err=0x%02x lsb=0x%02x msb=0x%02x\n",
+			      stat1, err, lsb, msb);
+	    if (stat1 == err && lsb == err && msb == err &&
+		timeout > (stat1 & ATA_S_BUSY ? 100 : 10))
+		mask &= ~0x02;
+	    if (!(stat1 & ATA_S_BUSY)) {
+		if ((err & 0x7f) == ATA_E_ILI) {
+		    if (lsb == ATAPI_MAGIC_LSB && msb == ATAPI_MAGIC_MSB) {
+			ch->devices |= ATA_ATAPI_SLAVE1;
+		    }
+		    else if (lsb == 0 && msb == 0 && (stat1 & ATA_S_READY)) {
+			ch->devices |= ATA_ATA_SLAVE1;
+		    }
+		}
+		else if ((stat1 & 0x0f) && err == lsb && err == msb) {
+		    stat1 |= ATA_S_BUSY;
+		}
+	    }
+	}
+
+	if ((ch->flags & ATA_KNOWN_PRESENCE) == 0 &&
+	    timeout > ((mask == 0x03) ? 20 : 10)) {
+		if ((mask & 0x01) && stat0 == 0xff)
+			mask &= ~0x01;
+		if ((mask & 0x02) && stat1 == 0xff)
+			mask &= ~0x02;
+	}
+	if (((mask & 0x01) == 0 || !(stat0 & ATA_S_BUSY)) &&
+	    ((mask & 0x02) == 0 || !(stat1 & ATA_S_BUSY)))
+		break;
+	ata_udelay(100000);
+    }
+
+    ATA_IDX_OUTB(ch, ATA_PC98_BANKADDR_RID, 0);
+no_secondary:
+    if (bootverbose)
+	device_printf(dev, "reset secondary stat0=%02x stat1=%02x devices=0x%x\n",
+		      stat0, stat1, ch->devices);
+
+}
+
 void
 ata_generic_reset(device_t dev)
 {
@@ -506,7 +658,7 @@ ata_generic_reset(device_t dev)
     }
 
     if (bootverbose)
-	device_printf(dev, "reset tp1 mask=%02x ostat0=%02x ostat1=%02x\n",
+	device_printf(dev, "reset primary mask=%02x ostat0=%02x ostat1=%02x\n",
 		      mask, ostat0, ostat1);
 
     /* if nothing showed up there is no need to get any further */
@@ -605,8 +757,9 @@ ata_generic_reset(device_t dev)
     }
 
     if (bootverbose)
-	device_printf(dev, "reset tp2 stat0=%02x stat1=%02x devices=0x%x\n",
+	device_printf(dev, "reset primary stat0=%02x stat1=%02x devices=0x%x\n",
 		      stat0, stat1, ch->devices);
+     if (ch->flags & ATA_PC98_SECONDARY) ata_generic_reset2(dev);
 }
 
 /* must be called with ATA channel locked and state_mtx held */
@@ -626,8 +779,15 @@ ata_generic_status(device_t dev)
 static int
 ata_wait(struct ata_channel *ch, int unit, u_int8_t mask)
 {
+	int dw;
+	if(ch->flags & ATA_USE_16BIT) dw = 0;
+	else dw = 8;
+	if(ch->flags & ATA_PC98_SECONDARY)
+		ATA_IDX_OUTB(ch, ATA_PC98_BANKADDR_RID, PC98_DEV(unit)|dw);
+    ATA_DEBUG_RQ(request, "begin transaction");
     u_int8_t status;
     int timeout = 0;
+//	return 0;
     
     DELAY(1);
 
@@ -678,8 +838,13 @@ int
 ata_generic_command(struct ata_request *request)
 {
     struct ata_channel *ch = device_get_softc(request->parent);
-
     /* select device */
+	int dw;
+	if(ch->flags & ATA_USE_16BIT) dw = 0;
+	else dw = 8;
+	if(ch->flags & ATA_PC98_SECONDARY)
+		ATA_IDX_OUTB(ch, ATA_PC98_BANKADDR_RID, PC98_DEV(request->unit)|dw);
+    ATA_DEBUG_RQ(request, "begin transaction");
     ATA_IDX_OUTB(ch, ATA_DRIVE, ATA_D_IBM | ATA_D_LBA | ATA_DEV(request->unit));
 
     /* ready to issue command ? */
@@ -760,7 +925,12 @@ static void
 ata_tf_read(struct ata_request *request)
 {
     struct ata_channel *ch = device_get_softc(request->parent);
-
+	int dw;
+	if(ch->flags & ATA_USE_16BIT) dw = 0;
+	else dw = 8;
+	if(ch->flags & ATA_PC98_SECONDARY)
+		ATA_IDX_OUTB(ch, ATA_PC98_BANKADDR_RID, PC98_DEV(request->unit)|dw);
+    ATA_DEBUG_RQ(request, "begin transaction");
     if (request->flags & ATA_R_48BIT) {
 	ATA_IDX_OUTB(ch, ATA_CONTROL, ATA_A_4BIT | ATA_A_HOB);
 	request->u.ata.count = (ATA_IDX_INB(ch, ATA_COUNT) << 8);
@@ -789,7 +959,12 @@ static void
 ata_tf_write(struct ata_request *request)
 {
     struct ata_channel *ch = device_get_softc(request->parent);
-
+	int dw;
+	if(ch->flags & ATA_USE_16BIT) dw = 0;
+	else dw = 8;
+	if(ch->flags & ATA_PC98_SECONDARY)
+		ATA_IDX_OUTB(ch, ATA_PC98_BANKADDR_RID, PC98_DEV(request->unit)|dw);
+    ATA_DEBUG_RQ(request, "begin transaction");
     if (request->flags & ATA_R_48BIT) {
 	ATA_IDX_OUTB(ch, ATA_FEATURE, request->u.ata.feature >> 8);
 	ATA_IDX_OUTB(ch, ATA_FEATURE, request->u.ata.feature);
@@ -819,6 +994,12 @@ static void
 ata_pio_read(struct ata_request *request, int length)
 {
 	struct ata_channel *ch = device_get_softc(request->parent);
+	int dw;
+	if(ch->flags & ATA_USE_16BIT) dw = 0;
+	else dw = 8;
+	if(ch->flags & ATA_PC98_SECONDARY)
+		ATA_IDX_OUTB(ch, ATA_PC98_BANKADDR_RID, PC98_DEV(request->unit)|dw);
+    ATA_DEBUG_RQ(request, "begin transaction");
 	struct bio *bio;
 	uint8_t *addr;
 	vm_offset_t page;
@@ -905,6 +1086,12 @@ static void
 ata_pio_write(struct ata_request *request, int length)
 {
 	struct ata_channel *ch = device_get_softc(request->parent);
+	int dw;
+	if(ch->flags & ATA_USE_16BIT) dw = 0;
+	else dw = 8;
+	if(ch->flags & ATA_PC98_SECONDARY)
+		ATA_IDX_OUTB(ch, ATA_PC98_BANKADDR_RID, PC98_DEV(request->unit)|dw);
+    ATA_DEBUG_RQ(request, "begin transaction");
 	struct bio *bio;
 	uint8_t *addr;
 	vm_offset_t page;
