@@ -34,7 +34,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__FBSDID("$FreeBSD: releng/11.4/sys/geom/geom_disk.c 356589 2020-01-10 00:55:37Z mav $");
 
 #include "opt_geom.h"
 
@@ -132,11 +132,14 @@ g_disk_access(struct g_provider *pp, int r, int w, int e)
 		if (error != 0)
 			return (error);
 		pp->sectorsize = dp->d_sectorsize;
+//		printf("Disk drive %s%d has d_maxsize %x\n",dp->d_name, dp->d_unit,dp->d_maxsize);
 		if (dp->d_maxsize == 0) {
 			printf("WARNING: Disk drive %s%d has no d_maxsize\n",
 			    dp->d_name, dp->d_unit);
 			dp->d_maxsize = DFLTPHYS;
 		}
+//		dp->d_maxsize = 0x8000;
+
 		if (dp->d_delmaxsize == 0) {
 			if (bootverbose && dp->d_flags & DISKFLAG_CANDELETE) {
 				printf("WARNING: Disk drive %s%d has no "

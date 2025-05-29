@@ -31,7 +31,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__FBSDID("$FreeBSD: releng/11.4/sys/geom/geom_pc98.c 332640 2018-04-17 02:18:04Z kevans $");
 
 #include <sys/param.h>
 #include <sys/endian.h>
@@ -92,6 +92,14 @@ g_pc98_modify(struct g_geom *gp, struct g_pc98_softc *ms, u_char *sec, int len _
 	if (sec[0x1fe] != 0x55 || sec[0x1ff] != 0xaa)
 		return (EBUSY);
 
+	if (sec[0xfe] != 0x55 || sec[0xff] != 0xaa)//Kakutyou Format Signature
+		return (EBUSY);
+
+	if(! ( ((sec[2] |sec[3]<< 8) == 0x9090)||((sec[2]|sec[3]<<8)  == 0) ) ){
+		printf("Geometry Modify to %d:%d\n",sec[3],sec[2]);
+		ms->fwsectors = sec[2];
+		ms->fwheads = sec[3];
+	}
 #if 0
 	/*
 	 * By convetion, it seems that the ipl program has a jump at location
@@ -124,13 +132,20 @@ g_pc98_modify(struct g_geom *gp, struct g_pc98_softc *ms, u_char *sec, int len _
 		    dp[i].dp_shd == dp[i].dp_ehd &&
 		    dp[i].dp_scyl == dp[i].dp_ecyl)
 			s[i] = l[i] = 0;
-		else if (dp[i].dp_ecyl == 0)
+		else if ( (dp[i].dp_ecyl == 0)&&(dp[i].dp_shd == 0)&&(dp[i].dp_ssect ==0) )
 			s[i] = l[i] = 0;
 		else {
 			s[i] = (off_t)dp[i].dp_scyl *
-				ms->fwsectors * ms->fwheads * ms->sectorsize;
-			l[i] = (off_t)(dp[i].dp_ecyl - dp[i].dp_scyl + 1) *
-				ms->fwsectors * ms->fwheads * ms->sectorsize;
+				ms->fwsectors * ms->fwheads * ms->sectorsize
+				+ (off_t)dp[i].dp_shd * ms->fwsectors * ms->sectorsize
+				+ (off_t)dp[i].dp_ssect * ms->sectorsize;
+//			l[i] = (off_t)(dp[i].dp_ecyl - dp[i].dp_scyl + 1) *
+//				ms->fwsectors * ms->fwheads * ms->sectorsize;
+			l[i] = (off_t)dp[i].dp_ecyl *
+				ms->fwsectors * ms->fwheads * ms->sectorsize
+				+ (off_t)dp[i].dp_ehd * ms->fwsectors * ms->sectorsize
+				+ (off_t)dp[i].dp_esect * ms->sectorsize
+				- s[i]; 
 		}
 		if (bootverbose) {
 			printf("PC98 Slice %d on %s:\n", i + 1, gp->name);
