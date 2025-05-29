@@ -1,7 +1,7 @@
 /*	$NecBSD: ct.c,v 1.13.12.5 2001/06/26 07:31:53 honda Exp $	*/
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__FBSDID("$FreeBSD: releng/11.4/sys/dev/ct/ct.c 274760 2014-11-20 20:50:05Z jhb $");
 /*	$NetBSD$	*/
 
 #define	CT_DEBUG
@@ -142,6 +142,7 @@ static void ct_attention(struct ct_softc *);
 static struct ct_synch_data *ct_make_synch_table(struct ct_softc *);
 static int ct_catch_intr(struct ct_softc *);
 static int ct_poll(void *);
+static int intrtimes = 0;
 
 struct scsi_low_funcs ct_funcs = {
 	SC_LOW_INIT_T ct_world_start,
@@ -587,7 +588,7 @@ ct_xfer(struct ct_softc *ct, u_int8_t *data, int len, int direction,
 	register u_int8_t aux;
 
 	*statp = 0;
-	if (len == 1)
+if(0)//	if (len == 1)
 	{
 		ct_cr_write_1(chp, wd3s_cmd, WD3S_SBT | WD3S_TFR_INFO);
 	}
@@ -603,7 +604,13 @@ ct_xfer(struct ct_softc *ct, u_int8_t *data, int len, int direction,
 		cthw_set_count(chp, 0);
 		return len;
 	}
-
+/*
+if (direction == SCSI_LOW_READ)
+printf("get data len %x\n",len);
+else
+printf("send data len %x\n",len);
+*/
+	
 	for (wc = 0; wc < ct->sc_tmaxcnt; wc ++)
 	{
 		/* check data ready */
@@ -612,11 +619,13 @@ ct_xfer(struct ct_softc *ct, u_int8_t *data, int len, int direction,
 			if (direction == SCSI_LOW_READ)
 			{
 				*data = ct_cr_read_1(chp, wd3s_data);
+//				printf("data get %x\n",data[0]);
 				if ((aux & STR_PE) != 0)
 					*statp |= SCSI_LOW_DATA_PE;
 			}
 			else
 			{
+//				printf("data send %x nokori %x\n",data[0],len-1);
 				ct_cr_write_1(chp, wd3s_data, *data);
 			}
 			len --;
@@ -626,6 +635,7 @@ ct_xfer(struct ct_softc *ct, u_int8_t *data, int len, int direction,
 		}
 		else
 		{
+//			printf("delay not send/get data\n");
 			DELAY(1);
 		}
 
@@ -639,6 +649,40 @@ ct_xfer(struct ct_softc *ct, u_int8_t *data, int len, int direction,
 
 #define	CT_PADDING_BUF_SIZE 32
 
+
+static void
+ct_io_xfer_padding(struct ct_softc *ct)
+{
+	struct ct_bus_access_handle *chp = &ct->sc_ch;
+	int wc;
+	int len = 65535;
+	u_int8_t data;
+	data = 0;
+	register u_int8_t aux;
+	aux = ct_stat_read_1(chp);
+	printf("write padding execute %x on %x\n",len,ct->sc_tmaxcnt);
+	for (wc = 0; wc < 100; wc ++)
+	{
+		/* check data ready */
+		if ((aux & (STR_BSY | STR_DBR)) == (STR_BSY | STR_DBR))
+		{
+//				printf("data send %x nokori %x\n",data[0],len-1);
+				ct_cr_write_1(chp, wd3s_data, data);
+			len --;
+			if (len <= 0)
+				break;
+		}
+		else
+		{
+			printf("delay not send/get data %x\n",wc);
+			DELAY(1);
+		}
+	}
+	printf("write padding executed %x on %x\n",len,ct->sc_tmaxcnt);
+
+}
+
+
 static void
 ct_io_xfer(struct ct_softc *ct)
 {
@@ -651,7 +695,6 @@ ct_io_xfer(struct ct_softc *ct)
 
 	/* polling mode */
 	ct_cr_write_1(chp, wd3s_ctrl, ct->sc_creg);
-
 	if (sp->scp_datalen <= 0)
 	{
 		slp->sl_error |= PDMAERR;
@@ -881,12 +924,16 @@ ct_catch_intr(struct ct_softc *ct)
 void
 ctintr(void *arg)
 {
+	if (intrtimes==0){
+	intrtimes = 1;
 	struct ct_softc *ct = arg;
 	struct scsi_low_softc *slp = &ct->sc_sclow;
 
 	SCSI_LOW_LOCK(slp);
 	ct_poll(ct);
 	SCSI_LOW_UNLOCK(slp);
+	intrtimes=0;
+	}
 }
 
 static int
@@ -912,8 +959,11 @@ again:
 		return 0;
 
 	scsi_status = ct_cr_read_1(chp, wd3s_stat);
-	if (scsi_status == ((u_int8_t) -1))
+//printf("scsi_status %x\n",scsi_status);
+	if (scsi_status == ((u_int8_t) -1)){
+		ct_phase_error(ct, scsi_status);
 		return 1;
+	}
 
 	/**************************************************
 	 * Check reselection, or nexus
@@ -948,6 +998,7 @@ again:
 	 **************************************************/
 	satgo = ct->sc_satgo;
 	ct->sc_satgo &= ~CT_SAT_GOING;
+
 
 	switch (ti->ti_phase)
 	{
@@ -1015,7 +1066,13 @@ again:
 			ct_phase_error(ct, scsi_status);
 			return 1;
 		}
-
+/* akan
+		if ((scsi_status & BSR_CM) == BSR_CMDERR)
+		{
+			ct_phase_error(ct, scsi_status);
+			return 1;
+		}
+*/
 		switch (scsi_status & BSR_PM)
 		{
 		case BSR_DATAOUT:
@@ -1036,6 +1093,11 @@ again:
 common_data_phase:
 			if (slp->sl_scp.scp_datalen > 0)
 			{
+
+//				if((slp->sl_scp.scp_datalen > 0xc800) && ((scsi_status & BSR_PM) == BSR_DATAOUT)){
+//					ct_io_xfer_padding(ct);//padding is here
+//				}
+
 				slp->sl_flags |= HW_PDMASTART;
 				if ((ct->sc_xmode & CT_XMODE_PIO) != 0)
 				{
@@ -1046,14 +1108,13 @@ common_data_phase:
 						return 1;
 					}
 				}
-
 				if ((ct->sc_xmode & CT_XMODE_DMA) != 0)
 				{
 					error = (*ct->ct_dma_xfer_start) (ct);
 					if (error == 0)
 					{
 						ct->sc_dma |= CT_DMA_DMASTART;
-						return 1;
+							return 1;
 					}
 				}
 			}
@@ -1079,7 +1140,6 @@ common_data_phase:
 				}
 				slp->sl_flags |= HW_PDMASTART;
 			}
-
 			ct_io_xfer(ct);
 			return 1;
 
@@ -1089,7 +1149,6 @@ common_data_phase:
 			{
 				ct_attention(ct);
 			}
-
 			if (ct_xfer(ct, slp->sl_scp.scp_cmd,
 				    slp->sl_scp.scp_cmdlen,
 				    SCSI_LOW_WRITE, &derror) != 0)
@@ -1098,7 +1157,6 @@ common_data_phase:
 				    "scsi cmd xfer short\n");
 			}
 			return 1;
-
 		case BSR_STATIN:
 			SCSI_LOW_SETUP_PHASE(ti, PH_STAT);
 			if ((ct_io_control & CT_USE_CCSEQ) != 0)
@@ -1106,6 +1164,15 @@ common_data_phase:
 				if (scsi_low_is_msgout_continue(ti, 0) != 0 ||
 				    ct->sc_atten != 0)
 				{
+//					printf("through msgout continue\n");
+					ct_xfer(ct, &regv, 1, SCSI_LOW_READ,
+						&derror);
+					scsi_low_statusin(slp, ti,
+						  	  regv | derror);
+				}
+				else if(scsi_status == 0x4b)
+				{
+//					printf("scsi status 0x4b\n");
 					ct_xfer(ct, &regv, 1, SCSI_LOW_READ,
 						&derror);
 					scsi_low_statusin(slp, ti,
@@ -1113,6 +1180,7 @@ common_data_phase:
 				}
 				else
 				{
+//					printf("scsi status == %x bypass\n",scsi_status);
 					ct->sc_satgo |= CT_SAT_GOING;
 					cthw_set_count(chp, 0);
 					cthw_phase_bypass(ct, 0x41);
@@ -1120,8 +1188,9 @@ common_data_phase:
 			}
 			else
 			{
-				ct_xfer(ct, &regv, 1, SCSI_LOW_READ, &derror);
-				scsi_low_statusin(slp, ti, regv | derror);
+//					printf("scsi statusin exec\n");
+					ct_xfer(ct, &regv, 1, SCSI_LOW_READ, &derror);
+					scsi_low_statusin(slp, ti, regv | derror);
 			}
 			return 1;
 
@@ -1138,12 +1207,11 @@ common_data_phase:
 		        if (ti->ti_ophase != ti->ti_phase)
 				flags |= SCSI_LOW_MSGOUT_INIT;
 			len = scsi_low_msgout(slp, ti, flags);
-
 			if (len > 1 && slp->sl_atten == 0)
 			{
 				ct_attention(ct);
 			}
-
+			if(ct->sc_chiprev == 0)ti->ti_msgoutstr[0] &= ~0x40;
 			if (ct_xfer(ct, ti->ti_msgoutstr, len, 
 				    SCSI_LOW_WRITE, &derror) != 0)
 			{
@@ -1156,7 +1224,6 @@ common_data_phase:
 
 		case BSR_MSGIN:/* msg in */
 			SCSI_LOW_SETUP_PHASE(ti, PH_MSGIN);
-
 			ct_xfer(ct, &regv, 1, SCSI_LOW_READ, &derror);
 			if (scsi_low_msgin(slp, ti, regv | derror) == 0)
 			{
@@ -1166,7 +1233,6 @@ common_data_phase:
 					scsi_low_attention(slp);
 				}
 			}
-
 			if ((ct_io_control & CT_FAST_INTR) != 0)
 			{
 				if (ct_catch_intr(ct) == 0)
@@ -1235,8 +1301,7 @@ common_data_phase:
 		default:
 			break;
 		}
-	}
-
+	} 
 	ct_phase_error(ct, scsi_status);
 	return 1;
 }

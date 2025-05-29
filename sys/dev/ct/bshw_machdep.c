@@ -1,7 +1,7 @@
 /*	$NecBSD: bshw_machdep.c,v 1.8.12.6 2001/06/29 06:28:05 honda Exp $	*/
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__FBSDID("$FreeBSD: releng/11.4/sys/dev/ct/bshw_machdep.c 274760 2014-11-20 20:50:05Z jhb $");
 /*	$NetBSD$	*/
 
 /*-
@@ -63,12 +63,17 @@ __FBSDID("$FreeBSD$");
 #include <dev/ct/bshwvar.h>
 
 #include <vm/pmap.h>
+#include <isa/isavar.h>
 
 #define	BSHW_IO_CONTROL_FLAGS	0
 
 u_int bshw_io_control = BSHW_IO_CONTROL_FLAGS;
 int bshw_data_read_bytes = 4096;
 int bshw_data_write_bytes = 4096;
+
+
+static caddr_t transportaddr;
+int drq;
 
 /*********************************************************
  * OS dep part
@@ -149,11 +154,15 @@ bshw_bus_reset(struct ct_softc *ct)
 int
 bshw_read_settings(struct ct_bus_access_handle *chp, struct bshw_softc *bs)
 {
-	static int irq_tbl[] = { 3, 5, 6, 9, 12, 13 };
+	static int irq_tbl[] = { 3, 5, 6, 9, 12, 13, -1, -1};
 
 	bs->sc_hostid = (ct_cr_read_1(chp, wd3s_auxc) & AUXCR_HIDM);
 	bs->sc_irq = irq_tbl[(ct_cr_read_1(chp, wd3s_auxc) >> 3) & 7];
 	bs->sc_drq = ct_cmdp_read_1(chp) & 3;
+	if(bs->sc_irq == -1){
+		bs->sc_irq = 3;
+		bs->sc_drq = 0;
+	}
 	return 0;
 }
 
@@ -378,8 +387,8 @@ bshw_smit_xfer_start(struct ct_softc *ct)
 /*********************************************************
  * DMA TRANSFER (BS)
  *********************************************************/
-static __inline void bshw_dma_write_1 \
-	(struct ct_bus_access_handle *, bus_addr_t, u_int8_t);
+//static __inline void bshw_dma_write_1 \
+//	(struct ct_bus_access_handle *, bus_addr_t, u_int8_t);
 static void bshw_dmastart(struct ct_softc *);
 static void bshw_dmadone(struct ct_softc *);
 
@@ -390,7 +399,6 @@ bshw_dma_xfer_start(struct ct_softc *ct)
 	struct sc_p *sp = &slp->sl_scp;
 	struct ct_bus_access_handle *chp = &ct->sc_ch;
 	struct bshw_softc *bs = ct->ct_hw;
-	vaddr_t va, endva, phys, nphys;
 	u_int io_control;
 
 	io_control = bs->sc_io_control | bshw_io_control;
@@ -398,45 +406,13 @@ bshw_dma_xfer_start(struct ct_softc *ct)
 		return EINVAL;
 
 	ct_cr_write_1(chp, wd3s_ctrl, ct->sc_creg | CR_DMA);
-	phys = vtophys((vaddr_t) sp->scp_data);
-	if (phys >= bs->sc_minphys)
-	{
-		/* setup segaddr */
-		bs->sc_segaddr = bs->sc_bounce_phys;
-		/* setup seglen */
-		bs->sc_seglen = sp->scp_datalen;
-		if (bs->sc_seglen > bs->sc_bounce_size)
-			bs->sc_seglen = bs->sc_bounce_size;
-		/* setup bufp */
-		bs->sc_bufp = bs->sc_bounce_addr;
-		if (sp->scp_direction == SCSI_LOW_WRITE)
-			bcopy(sp->scp_data, bs->sc_bufp, bs->sc_seglen);
-	}
-	else
-	{
-		/* setup segaddr */
-		bs->sc_segaddr = (u_int8_t *) phys;
-		/* setup seglen */
-		endva = (vaddr_t) round_page((vaddr_t) sp->scp_data + sp->scp_datalen);
-		for (va = (vaddr_t) sp->scp_data; ; phys = nphys)
-		{
-			if ((va += PAGE_SIZE) >= endva)
-			{
-				bs->sc_seglen = sp->scp_datalen;
-				break;
-			}
+	transportaddr = sp->scp_data;
+	bs->sc_seglen = sp->scp_datalen;
+	if (bs->sc_seglen > 0x10000)
+		bs->sc_seglen = 0x10000;
 
-			nphys = vtophys(va);
-			if (phys + PAGE_SIZE != nphys || nphys >= bs->sc_minphys)
-			{
-				bs->sc_seglen =
-				    (u_int8_t *) trunc_page(va) - sp->scp_data;
-				break;
-			}
-		}
-		/* setup bufp */
-		bs->sc_bufp = NULL;
-	}
+	/* setup bufp */
+	bs->sc_bufp = NULL;
 
 	bshw_dmastart(ct);
 	cthw_set_count(chp, bs->sc_seglen);
@@ -451,10 +427,8 @@ bshw_dma_xfer_stop(struct ct_softc *ct)
 	struct sc_p *sp = &slp->sl_scp;
 	struct bshw_softc *bs = ct->ct_hw;
 	struct targ_info *ti;
-	u_int count, transbytes;
-
+	u_int32_t count, transbytes;
 	bshw_dmadone(ct);
-
  	ti = slp->sl_Tnexus;
 	if (ti == NULL)
 		return;
@@ -465,6 +439,7 @@ bshw_dma_xfer_stop(struct ct_softc *ct)
 		if (count < (u_int) bs->sc_seglen)
 		{
 			transbytes = bs->sc_seglen - count;
+				if(transbytes > 0xffff)transbytes = 0x10000;//
 			if (bs->sc_bufp != NULL &&
 			    sp->scp_direction == SCSI_LOW_READ)
 				bcopy(bs->sc_bufp, sp->scp_data, transbytes);
@@ -479,7 +454,6 @@ bshw_dma_xfer_stop(struct ct_softc *ct)
 			    count, bs->sc_seglen);
 			slp->sl_error |= PDMAERR;
 		}
-
 		scsi_low_data_finish(slp);
 	}
 	else
@@ -506,8 +480,9 @@ bshw_dma_xfer_stop(struct ct_softc *ct)
 #define	DMA37MD_READ	0x08
 #define	DMA37MD_SINGLE	0x40
 
-static bus_addr_t dmapageport[4] = { 0x27, 0x21, 0x23, 0x25 };
+//static bus_addr_t dmapageport[4] = { 0x27, 0x21, 0x23, 0x25 };
 
+#if 0
 static __inline void 
 bshw_dma_write_1(struct ct_bus_access_handle *chp, bus_addr_t port, 
     u_int8_t val)
@@ -516,6 +491,7 @@ bshw_dma_write_1(struct ct_bus_access_handle *chp, bus_addr_t port,
 	CT_BUS_WEIGHT(chp);
 	outb(port, val);
 }
+#endif
 
 static void
 bshw_dmastart(struct ct_softc *ct)
@@ -523,13 +499,10 @@ bshw_dmastart(struct ct_softc *ct)
 	struct scsi_low_softc *slp = &ct->sc_sclow;
 	struct bshw_softc *bs = ct->ct_hw;
 	struct ct_bus_access_handle *chp = &ct->sc_ch;
-	int chan = bs->sc_drq;
-	bus_addr_t waport;
-	u_int8_t regv, *phys = bs->sc_segaddr;
 	u_int nbytes = bs->sc_seglen;
 
-	/* flush cpu cache */
-	(*bs->sc_dmasync_before) (ct);
+//	/* flush cpu cache */
+//	(*bs->sc_dmasync_before) (ct);
 
 	/*
 	 * Program one of DMA channels 0..3. These are
@@ -537,29 +510,12 @@ bshw_dmastart(struct ct_softc *ct)
 	 */
 	/* set dma channel mode, and reset address ff */
 
-	if (slp->sl_scp.scp_direction == SCSI_LOW_READ)
-		regv = DMA37MD_WRITE | DMA37MD_SINGLE | chan;
-	else
-		regv = DMA37MD_READ | DMA37MD_SINGLE | chan;
-
-	bshw_dma_write_1(chp, DMA1_MODE, regv);
-	bshw_dma_write_1(chp, DMA1_FFC, 0);
-
-	/* send start address */
-	waport = DMA1_CHN(chan);
-	bshw_dma_write_1(chp, waport, (u_int) phys);
-	bshw_dma_write_1(chp, waport, ((u_int) phys) >> 8);
-	bshw_dma_write_1(chp, dmapageport[chan], ((u_int) phys) >> 16);
-
-	/* send count */
-	bshw_dma_write_1(chp, waport + 2, --nbytes);
-	bshw_dma_write_1(chp, waport + 2, nbytes >> 8);
-
+	drq = bs->sc_drq;
 	/* vendor unique hook */
 	if (bs->sc_hw->hw_dma_start)
 		(*bs->sc_hw->hw_dma_start)(ct);
-
-	bshw_dma_write_1(chp, DMA1_SMSK, chan);
+	isa_dmastart(slp->sl_scp.scp_direction == SCSI_LOW_READ ? ISADMA_READ : ISADMA_WRITE,
+		transportaddr, nbytes, bs->sc_drq);
 	ct_cmdp_write_1(chp, CMDP_DMES);
 }
 
@@ -568,16 +524,32 @@ bshw_dmadone(struct ct_softc *ct)
 {
 	struct bshw_softc *bs = ct->ct_hw;
 	struct ct_bus_access_handle *chp = &ct->sc_ch;
-
+#if 0
 	bshw_dma_write_1(chp, DMA1_SMSK, (bs->sc_drq | DMA37SM_SET));
+#else
 	ct_cmdp_write_1(chp, CMDP_DMER);
 
+	struct scsi_low_softc *slp = &ct->sc_sclow;
+
+//	isa_dmastop(bs->sc_drq);
+loop:
+	switch(isa_dmastatus(bs->sc_drq)){
+		case -1:
+		case -2:
+		case 0:break;
+		default:
+			goto loop;
+	} 
+	isa_dmadone(slp->sl_scp.scp_direction == SCSI_LOW_READ ? ISADMA_READ : ISADMA_WRITE,
+//		bs->sc_bounce_addr, bs->sc_seglen, bs->sc_drq);
+		transportaddr, bs->sc_seglen, bs->sc_drq);
+#endif
 	/* vendor unique hook */
 	if (bs->sc_hw->hw_dma_stop)
 		(*bs->sc_hw->hw_dma_stop) (ct);
 
-	/* flush cpu cache */
-	(*bs->sc_dmasync_after) (ct);
+//	/* flush cpu cache */
+//	(*bs->sc_dmasync_after) (ct);
 }
 
 /**********************************************
@@ -590,15 +562,20 @@ static int bshw_dma_init_texa(struct ct_softc *);
 static void bshw_dma_start_elecom(struct ct_softc *);
 static void bshw_dma_stop_elecom(struct ct_softc *);
 
+
 static int
 bshw_dma_init_texa(struct ct_softc *ct)
 {
 	struct ct_bus_access_handle *chp = &ct->sc_ch;
 	u_int8_t regval;
 
-	if ((regval = ct_cr_read_1(chp, 0x37)) & 0x08)
+	if (ct_cr_read_1(chp, 0x37) == 0xff)
 		return 0;
 
+//	if ((regval = ct_cr_read_1(chp, 0x37)) & 0x08)
+//		return 0;
+
+	regval = ct_cr_read_1(chp, 0x37);
 	ct_cr_write_1(chp, 0x37, regval | 0x08);
 	regval = ct_cr_read_1(chp, 0x3f);
 	ct_cr_write_1(chp, 0x3f, regval | 0x08);
@@ -606,17 +583,29 @@ bshw_dma_init_texa(struct ct_softc *ct)
 }
 
 static int
+bshw_dma_noinit(struct ct_softc *ct){
+	return 0;
+	}
+
+
+static int
 bshw_dma_init_sc98(struct ct_softc *ct)
 {
 	struct ct_bus_access_handle *chp = &ct->sc_ch;
 
-	if (ct_cr_read_1(chp, 0x37) & 0x08)
+	ct_cr_write_1(chp, 0x37, 0x1a);
+	ct_cr_write_1(chp, 0x3f, 0x1a);
+
+	if (ct_cr_read_1(chp, 0x37) == 0xff)
 		return 0;
+
+//	if (ct_cr_read_1(chp, 0x37) & 0x08)
+//		return 0;
 
 	/* If your card is SC98 with bios ver 1.01 or 1.02 under no PCI */
 	ct_cr_write_1(chp, 0x37, 0x1a);
 	ct_cr_write_1(chp, 0x3f, 0x1a);
-#if	0
+#if 0
 	/* only valid for IO */
 	ct_cr_write_1(chp, 0x40, 0xf4);
 	ct_cr_write_1(chp, 0x41, 0x9);
@@ -628,7 +617,9 @@ bshw_dma_init_sc98(struct ct_softc *ct)
 	ct_cr_write_1(chp, 0x4b, 0xff);
 	ct_cr_write_1(chp, 0x4e, 0x4e);
 #endif
-	return 1;
+
+	return (ct_cr_read_1(chp, 0x37));
+//	return 1;
 }
 
 static void
@@ -667,12 +658,45 @@ bshw_dma_stop_elecom(struct ct_softc *ct)
 	ct_cr_write_1(chp, 0x32, tmp | 0x20);
 }
 
+static int
+bshw_dma_start_nobusmaster(struct ct_softc *ct)
+{
+	struct ct_bus_access_handle *chp = &ct->sc_ch;
+
+	if (ct_cr_read_1(chp, 0x37) == 0xff)
+		return 1;
+	ct_cr_write_1(chp, 0x37, 0); //busmaster OFF
+	ct_cr_write_1(chp, 0x3f, 0);
+
+	if(ct_cr_read_1(chp, 0x37) == 0x56)return 0x56;//IF-2771 requires async & not disconnect
+	return 1; //use bounce
+}
+
+static void
+bshw_dma_start_busmaster(struct ct_softc *ct)
+{
+	struct ct_bus_access_handle *chp = &ct->sc_ch;
+
+	ct_cr_write_1(chp, 0x73, 0x43);
+	ct_cr_write_1(chp, 0x74, 0x34);
+}
+
+
+static void
+bshw_dma_stop_busmaster(struct ct_softc *ct)
+{
+	struct ct_bus_access_handle *chp = &ct->sc_ch;
+
+	ct_cr_write_1(chp, 0x73, 0x43);
+	ct_cr_write_1(chp, 0x74, 0x34);
+}
+
+
 static struct bshw bshw_generic = {
 	BSHW_SYNC_RELOAD,
 
 	0,
-
-	NULL,
+	bshw_dma_start_nobusmaster,
 	NULL,
 	NULL,
 };
@@ -702,9 +726,10 @@ static struct bshw bshw_elecom = {
 
 	0x38,
 
-	NULL,
+	bshw_dma_init_sc98,
 	bshw_dma_start_elecom,
 	bshw_dma_stop_elecom,
+
 };
 
 static struct bshw bshw_lc_smit = {
@@ -712,7 +737,7 @@ static struct bshw bshw_lc_smit = {
 
 	0x60,
 
-	NULL,
+	bshw_dma_noinit,
 	NULL,
 	NULL,
 };
@@ -722,7 +747,7 @@ static struct bshw bshw_lha20X = {
 
 	0x60,
 
-	NULL,
+	bshw_dma_init_sc98,
 	NULL,
 	NULL,
 };
@@ -741,3 +766,10 @@ struct dvcfg_hwsel bshw_hwsel = {
 	DVCFG_HWSEL_SZ(bshw_hwsel_array),
 	bshw_hwsel_array
 };
+
+int bshw_dma_init2(struct ct_softc *ct)
+{
+	if(bshw_dma_init_sc98(ct)==0)return 0x1;
+	if(bshw_dma_init_texa(ct)==0)return 0x2;
+	return 0;
+}

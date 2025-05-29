@@ -1,7 +1,7 @@
 /*	$NecBSD: ct_isa.c,v 1.6 1999/07/26 06:32:01 honda Exp $	*/
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__FBSDID("$FreeBSD: releng/11.4/sys/dev/ct/ct_isa.c 296137 2016-02-27 03:38:01Z jhibbits $");
 /*	$NetBSD$	*/
 
 /*-
@@ -77,8 +77,9 @@ static void ct_space_unmap(device_t, struct ct_softc *);
 static struct bshw *ct_find_hw(device_t);
 static void ct_dmamap(void *, bus_dma_segment_t *, int, int);
 static void ct_isa_bus_access_weight(struct ct_bus_access_handle *);
-static void ct_isa_dmasync_before(struct ct_softc *);
-static void ct_isa_dmasync_after(struct ct_softc *);
+//static void ct_isa_dmasync_before(struct ct_softc *);
+//static void ct_isa_dmasync_after(struct ct_softc *);
+//static long ct_find_hw2(struct ct_softc *);
 
 struct ct_isa_softc {
 	struct ct_softc sc_ct;
@@ -153,6 +154,7 @@ ct_isa_match(device_t dev)
 		bus_set_resource(dev, SYS_RES_DRQ, 0, bs->sc_drq, 1);
 	}
 
+
 	bus_release_resource(dev, SYS_RES_IOPORT, 0, port_res);
 	if (mem_res != NULL)
 		bus_release_resource(dev, SYS_RES_MEMORY, 0, mem_res);
@@ -165,6 +167,11 @@ ct_isa_match(device_t dev)
 static int
 ct_isa_attach(device_t dev)
 {
+
+//	if (inb(0x63f)!= 0xff){
+//		if (inb(0x63f) & 0x80)//WriteBack machine??
+//			need_post_dma_flush = 0;
+//	}
 	struct ct_isa_softc *pct = device_get_softc(dev);
 	struct ct_softc *ct = &pct->sc_ct;
 	struct ct_bus_access_handle *chp = &ct->sc_ch;
@@ -172,8 +179,6 @@ ct_isa_attach(device_t dev)
 	struct bshw_softc *bs = &pct->sc_bshw;
 	struct bshw *hw;
 	int irq_rid, drq_rid, chiprev;
-	u_int8_t *vaddr;
-	bus_addr_t addr;
 
 	hw = ct_find_hw(dev);
 	if (ct_space_map(dev, hw, &ct->port_res, &ct->mem_res) != 0) {
@@ -203,38 +208,18 @@ ct_isa_attach(device_t dev)
 		ct_space_unmap(dev, ct);
 		return ENXIO;
 	}
-
-	/* setup DMA map */
-	if (bus_dma_tag_create(NULL, 1, 0,
-			       BUS_SPACE_MAXADDR_24BIT, BUS_SPACE_MAXADDR,
-			       NULL, NULL, DFLTPHYS, 1,
-			       BUS_SPACE_MAXSIZE_32BIT,
-			       BUS_DMA_ALLOCNOW, NULL, NULL,
-			       &ct->sc_dmat) != 0) {
-		device_printf(dev, "can't set up ISA DMA map\n");
-		ct_space_unmap(dev, ct);
-		return ENXIO;
-	}
-
-	if (bus_dmamem_alloc(ct->sc_dmat, (void **)&vaddr, BUS_DMA_NOWAIT,
-			     &ct->sc_dmamapt) != 0) {
-		device_printf(dev, "can't set up ISA DMA map\n");
-		ct_space_unmap(dev, ct);
-		return ENXIO;
-	}
-
-	bus_dmamap_load(ct->sc_dmat, ct->sc_dmamapt, vaddr, DFLTPHYS,
-			ct_dmamap, &addr, BUS_DMA_NOWAIT);
-
 	/* setup machdep softc */
 	bs->sc_hw = hw;
 	bs->sc_io_control = 0;
-	bs->sc_bounce_phys = (u_int8_t *)addr;
-	bs->sc_bounce_addr = vaddr;
-	bs->sc_bounce_size = DFLTPHYS;
+
+	bs->sc_bounce_phys = NULL;
+	bs->sc_bounce_addr = NULL;
+	bs->sc_bounce_size = 0;
+
+
 	bs->sc_minphys = (1 << 24);
-	bs->sc_dmasync_before = ct_isa_dmasync_before;
-	bs->sc_dmasync_after = ct_isa_dmasync_after;
+//	bs->sc_dmasync_before =  ct_isa_dmasync_before;
+//	bs->sc_dmasync_after = ct_isa_dmasync_after;
 	bshw_read_settings(chp, bs);
 
 	/* setup ct driver softc */
@@ -267,7 +252,7 @@ ct_isa_attach(device_t dev)
 		else
 		{
 			/* s = "WD33C93_A"; */
-			ct->sc_chipclk = 10;
+			ct->sc_chipclk = 8;
 		}
 		break;
 
@@ -282,14 +267,46 @@ ct_isa_attach(device_t dev)
 		ct->sc_chipclk = 20;
 		break;
 	}
-#if	0
-	printf("%s: chiprev %s chipclk %d MHz\n", 
-		slp->sl_dev.dv_xname, s, ct->sc_chipclk);
+
+#if	1
+	printf("chiprev chipclk %d MHz\n", 
+		ct->sc_chipclk);
 #endif
 
 	slp->sl_dev = dev;
 	slp->sl_hostid = bs->sc_hostid;
 	slp->sl_cfgflags = device_get_flags(dev);
+
+if(((*hw->hw_dma_init)(ct)) == 0x56){//IF-2771
+//ct->sc_xmode &= ~(CT_XMODE_DMA|CT_XMODE_PIO);//data register mode veryyyy slow
+//	hw->hw_sregaddr = 0x38;//??? iti humei
+	printf("%x: chiprev IF-2771 chipclk %d MHz but 20.0MHz???\n", 
+		 chiprev,ct->sc_chipclk);
+	slp->sl_cfgflags = device_get_flags(dev);
+	slp->sl_cfgflags |= CFG_ASYNC|CFG_NODISC;
+}
+
+
+if(slp->sl_cfgflags & 0x1000)//original parameter
+	{
+	ct->sc_xmode &= ~(CT_XMODE_DMA|CT_XMODE_PIO);//data register mode veryyyy slow
+	printf("data register mode veryyyy slow\n");
+	hw->hw_dma_start = NULL;
+	hw->hw_dma_stop = NULL;
+	hw->hw_sregaddr = 0;
+	}
+else
+{
+	if(((*hw->hw_dma_init)(ct)) == 0){
+		isa_dma_init16(bs->sc_drq ,0x10000 ,M_ZERO|0x8000);
+		hw->hw_dma_start = NULL;
+		hw->hw_dma_stop = NULL;
+		hw->hw_sregaddr = 0;
+	}else isa_dma_init16(bs->sc_drq ,0x10000 ,M_ZERO);
+}
+
+
+
 	mtx_init(&slp->sl_lock, "ct", NULL, MTX_DEF);
 
 	ctattachsubr(ct);
@@ -308,6 +325,7 @@ ct_find_hw(device_t dev)
 {
 	return DVCFG_HW(&bshw_hwsel, DVCFG_MAJOR(device_get_flags(dev)));
 }
+
 
 static int
 ct_space_map(device_t dev, struct bshw *hw,
@@ -361,22 +379,25 @@ ct_dmamap(void *arg, bus_dma_segment_t *seg, int nseg, int error)
 static void
 ct_isa_bus_access_weight(struct ct_bus_access_handle *chp)
 {
-
 	outb(0x5f, 0);
 }
 
+/*
 static void
 ct_isa_dmasync_before(struct ct_softc *ct)
 {
-
-	if (need_pre_dma_flush)
-		wbinvd();
+//	if (need_pre_dma_flush){
+//		wbinvd();
+//		outb(0x43f, 0xa0);
+//	}
 }
 
 static void
 ct_isa_dmasync_after(struct ct_softc *ct)
 {
-
-	if (need_post_dma_flush)
-		invd();
+//	if (need_post_dma_flush){
+//		invd();
+//		outb(0x43f, 0xa0);
+//	}
 }
+*/

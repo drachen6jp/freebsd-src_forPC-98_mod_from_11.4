@@ -1,4 +1,4 @@
-/* $FreeBSD$ */
+/* $FreeBSD: releng/11.4/sys/dev/ct/bshwvar.h 139749 2005-01-06 01:43:34Z imp $ */
 /*	$NecBSD: bshwvar.h,v 1.3.14.3 2001/06/21 04:07:37 honda Exp $	*/
 /*	$NetBSD$	*/
 
@@ -61,7 +61,8 @@ struct bshw_softc {
 	/* dma transfer */
 	u_int8_t *sc_segaddr;
 	u_int8_t *sc_bufp;
-	int sc_seglen;
+//	int sc_seglen;
+	u_int32_t sc_seglen;
 	u_int sc_sdatalen;		/* SMIT */
 	u_int sc_edatalen;		/* SMIT */
 
@@ -80,8 +81,8 @@ struct bshw_softc {
 
 	/* hardware */
 	struct bshw *sc_hw;
-	void ((*sc_dmasync_before))(struct ct_softc *);
-	void ((*sc_dmasync_after))(struct ct_softc *);
+//	void ((*sc_dmasync_before))(struct ct_softc *);
+//	void ((*sc_dmasync_after))(struct ct_softc *);
 };
 
 void bshw_synch_setup(struct ct_softc *, struct targ_info *);
@@ -91,6 +92,8 @@ int bshw_smit_xfer_start(struct ct_softc *);
 void bshw_smit_xfer_stop(struct ct_softc *);
 int bshw_dma_xfer_start(struct ct_softc *);
 void bshw_dma_xfer_stop(struct ct_softc *);
+
+int bshw_dma_init2(struct ct_softc *);
 
 extern struct dvcfg_hwsel bshw_hwsel;
 #endif	/* !_BSHWVAR_H_ */
