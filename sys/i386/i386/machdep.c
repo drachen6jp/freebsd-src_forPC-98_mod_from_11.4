@@ -38,7 +38,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__FBSDID("$FreeBSD: releng/11.4/sys/i386/i386/machdep.c 347700 2019-05-16 14:42:16Z markj $");
 
 #include "opt_apic.h"
 #include "opt_atpic.h"
@@ -297,6 +297,7 @@ cpu_startup(dummy)
 	if (memsize < ptoa((uintmax_t)vm_cnt.v_free_count))
 		memsize = ptoa((uintmax_t)Maxmem);
 	printf("real memory  = %ju (%ju MB)\n", memsize, memsize >> 20);
+	printf("Maxmem = %lx\n", Maxmem);
 	realmem = atop(memsize);
 
 	/*
@@ -1844,7 +1845,6 @@ getmemsize(int first)
 	 * based on ``hw.physmem'' and the results of the memory test.
 	 */
 	Maxmem = atop(physmap[physmap_idx + 1]);
-
 #ifdef MAXMEM
 	Maxmem = MAXMEM / 4;
 #endif
@@ -2456,7 +2456,9 @@ init386(int first)
 	struct pcpu *pc;
 	struct xstate_hdr *xhdr;
 	caddr_t kmdp;
+#ifndef PC98
 	size_t ucode_len;
+#endif
 	int late_console;
 
 	thread0.td_kstack = proc0kstack;
@@ -2469,10 +2471,17 @@ init386(int first)
 	proc_linkup0(&proc0, &thread0);
 
 #ifdef PC98
+	u_int under16,extmem;
 	/*
 	 * Initialize DMAC
 	 */
 	pc98_init_dmac();
+	/* for K6 WriteAllocate */
+	under16 = pc98_getmemsize(&basemem, &extmem);
+	if(extmem > 0)
+		Maxmem = atop(0x100000 + extmem*1024);
+	else
+		Maxmem = atop(0x100000 + under16*1024);
 #endif
 
 	metadata_missing = 0;
@@ -2487,7 +2496,7 @@ init386(int first)
 		init_static_kenv((char *)bootinfo.bi_envp + KERNBASE, 0);
 	else
 		init_static_kenv(NULL, 0);
-
+#ifndef PC98
 	/*
 	 * Re-evaluate CPU features if we loaded a microcode update.
 	 */
@@ -2496,7 +2505,7 @@ init386(int first)
 		identify_cpu();
 		first = roundup2(first + ucode_len, PAGE_SIZE);
 	}
-
+#endif
 	identify_hypervisor();
 
 	/* Init basic tunables, hz etc */
