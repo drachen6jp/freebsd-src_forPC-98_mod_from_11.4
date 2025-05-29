@@ -24,7 +24,7 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- * $FreeBSD$
+ * $FreeBSD: releng/11.4/sys/dev/pccbb/pccbbvar.h 331722 2018-03-29 02:50:57Z eadler $
  */
 
 /*
@@ -88,6 +88,7 @@ struct cbb_softc {
 	void (*chipinit)(struct cbb_softc *);
 	int	powerintr;
 	struct root_hold_token *sc_root_token;
+	struct		resource *irq_res2;
 };
 
 /* result of detect_card */
@@ -142,24 +143,57 @@ int	cbb_teardown_intr(device_t dev, device_t child, struct resource *irq,
 int	cbb_write_ivar(device_t brdev, device_t child, int which,
 	    uintptr_t value);
 
+uint8_t
+cbb_getb_io(struct cbb_softc *sc, uint32_t reg);
+void
+cbb_setb_io(struct cbb_softc *sc, uint32_t reg, uint32_t bits);
+
+
 /*
  */
+static __inline uint8_t
+cbb_getb(struct cbb_softc *sc, uint32_t reg)
+{
+	if(sc->exca[0].chipset & EXCA_CARDBUS)
+	return (bus_space_read_1(sc->bst, sc->bsh, reg));
+	return (cbb_getb_io(sc, reg));
+}
+
+
 static __inline void
 cbb_set(struct cbb_softc *sc, uint32_t reg, uint32_t val)
 {
+	if(sc->exca[0].flags & EXCA_HAS_MEMREG_WIN){
 	bus_space_write_4(sc->bst, sc->bsh, reg, val);
+	}else{
+//	printf("cbb_set for IO %x %x\n",reg,val);
+	cbb_setb_io(sc, reg, val&0xff);
+	cbb_setb_io(sc, reg+1, (val >> 8)&0xff);
+	cbb_setb_io(sc, reg+2, (val >> 16)&0xff);
+	cbb_setb_io(sc, reg+3, (val >> 24)&0xff);
+	}
 }
 
 static __inline uint32_t
 cbb_get(struct cbb_softc *sc, uint32_t reg)
 {
-	return (bus_space_read_4(sc->bst, sc->bsh, reg));
+	if(sc->exca[0].flags & EXCA_HAS_MEMREG_WIN)
+		return (bus_space_read_4(sc->bst, sc->bsh, reg));
+	return (	cbb_getb_io(sc, reg)|
+			(cbb_getb_io(sc, reg+1)<<8)|
+			(cbb_getb_io(sc, reg+2)<<16)|
+			(cbb_getb_io(sc, reg+3)<<24));
 }
 
 static __inline void
 cbb_setb(struct cbb_softc *sc, uint32_t reg, uint32_t bits)
 {
+	if(sc->exca[0].flags & EXCA_HAS_MEMREG_WIN)
 	cbb_set(sc, reg, cbb_get(sc, reg) | bits);
+	else{
+	cbb_setb_io(sc, reg, cbb_getb_io(sc, reg) | bits);
+	printf("cbb_setb for IO %x %x\n",reg,bits);
+	}
 }
 
 static __inline void

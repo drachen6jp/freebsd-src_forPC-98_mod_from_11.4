@@ -75,7 +75,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__FBSDID("$FreeBSD: releng/11.4/sys/dev/pccbb/pccbb.c 337121 2018-08-02 09:29:39Z avg $");
 
 #include <sys/param.h>
 #include <sys/bus.h>
@@ -124,7 +124,7 @@ __FBSDID("$FreeBSD$");
 
 #define CBB_START_MEM	0x88000000
 #define CBB_START_32_IO 0x1000
-#define CBB_START_16_IO 0x100
+#define CBB_START_16_IO 0x3D0
 
 devclass_t cbb_devclass;
 
@@ -136,6 +136,12 @@ u_long cbb_start_mem = CBB_START_MEM;
 SYSCTL_ULONG(_hw_cbb, OID_AUTO, start_memory, CTLFLAG_RWTUN,
     &cbb_start_mem, CBB_START_MEM,
     "Starting address for memory allocations");
+/*
+u_long cbb_start_mem16 = 0xc0000;
+SYSCTL_ULONG(_hw_cbb, OID_AUTO, start_memory16, CTLFLAG_RWTUN,
+    &cbb_start_mem16, 0xc0000,
+    "Starting address for memory allocations");
+*/
 
 u_long cbb_start_16_io = CBB_START_16_IO;
 SYSCTL_ULONG(_hw_cbb, OID_AUTO, start_16_io, CTLFLAG_RWTUN,
@@ -175,6 +181,10 @@ static int	cbb_cardbus_power_disable_socket(device_t brdev,
 		    device_t child);
 static int	cbb_func_filt(void *arg);
 static void	cbb_func_intr(void *arg);
+
+//static int	cbb_do_power(device_t brdev);
+
+
 
 static void
 cbb_remove_res(struct cbb_softc *sc, struct resource *res)
@@ -217,6 +227,7 @@ cbb_insert_res(struct cbb_softc *sc, struct resource *res, int type,
 	rle->res = res;
 	rle->type = type;
 	rle->rid = rid;
+//	printf("resouce start %llx\n",rman_get_start(res));
 	SLIST_INSERT_HEAD(&sc->rl, rle, link);
 }
 
@@ -270,9 +281,15 @@ cbb_enable_func_intr(struct cbb_softc *sc)
 {
 	uint8_t reg;
 
+ if(sc->chipset == 0){
+	reg = exca_getb(&sc->exca[0], EXCA_INTR);
+//	printf("exca_enable func intr reg %x\n",reg);
+ }else{
 	reg = (exca_getb(&sc->exca[0], EXCA_INTR) & ~EXCA_INTR_IRQ_MASK) | 
 	    EXCA_INTR_IRQ_NONE;
 	exca_putb(&sc->exca[0], EXCA_INTR, reg);
+ }
+
 }
 
 int
@@ -316,17 +333,20 @@ cbb_detach(device_t brdev)
 	free(devlist, M_TEMP);
 
 	/* Turn off the interrupts */
+if(sc->chipset != 0){
 	cbb_set(sc, CBB_SOCKET_MASK, 0);
-
+}
 	/* reset 16-bit pcmcia bus */
+//printf("exca clear reset flag 0x40 at detach\n");
 	exca_clrb(&sc->exca[0], EXCA_INTR, EXCA_INTR_RESET);
 
 	/* turn off power */
 	cbb_power(brdev, CARD_OFF);
 
 	/* Ack the interrupt */
-	cbb_set(sc, CBB_SOCKET_EVENT, 0xffffffff);
-
+if(sc->chipset != 0){
+		cbb_set(sc, CBB_SOCKET_EVENT, 0xffffffff);
+}
 	/*
 	 * Wait for the thread to die.  kproc_exit will do a wakeup
 	 * on the event thread's struct proc * so that we know it is
@@ -475,7 +495,17 @@ cbb_event_thread(void *arg)
 		 * and that code isn't MP safe, we have to hold Giant.
 		 */
 		mtx_lock(&Giant);
-		status = cbb_get(sc, CBB_SOCKET_STATE);
+		if(sc->chipset != 0){
+			status = cbb_get(sc, CBB_SOCKET_STATE);
+		}else{
+			status = exca_getb(&sc->exca[0], 1);//Interface Status
+//			printf("Status is 0x%x\n", status);
+			if((status & (0x4|0x8)) == 0xc){//card inserted
+				status = 0;
+			}else{
+			goto cbb_not_insert;
+			}
+		}
 		DPRINTF(("Status is 0x%x\n", status));
 		if (!CBB_CARD_PRESENT(status)) {
 			not_a_card = 0;		/* We know card type */
@@ -500,6 +530,7 @@ cbb_event_thread(void *arg)
 			not_a_card = 0;		/* We know card type */
 			cbb_insert(sc);
 		}
+cbb_not_insert:
 		mtx_unlock(&Giant);
 
 		/*
@@ -526,7 +557,13 @@ cbb_event_thread(void *arg)
 		 * a chance to run.
 		 */
 		mtx_lock(&sc->mtx);
+if(sc->chipset != 0){
 		cbb_setb(sc, CBB_SOCKET_MASK, CBB_SOCKET_MASK_CD | CBB_SOCKET_MASK_CSTS);
+}else{
+//		printf("exca intr reset flag clear at not insert\n");
+//		exca_clrb(&sc->exca[0], EXCA_INTR, EXCA_INTR_RESET);//dame sasenai
+//		exca_clrb(&sc->exca[0], EXCA_CSC_INTR, EXCA_CSC_INTR_CD_ENABLE);
+}
 		msleep(&sc->intrhand, &sc->mtx, 0, "-", 0);
 		err = 0;
 		while (err != EWOULDBLOCK &&
@@ -534,6 +571,7 @@ cbb_event_thread(void *arg)
 			err = msleep(&sc->intrhand, &sc->mtx, 0, "-", hz / 5);
 	}
 	DEVPRINTF((sc->dev, "Thread terminating\n"));
+//printf("pcmcia Thread terminating\n");
 	sc->flags &= ~CBB_KTHREAD_RUNNING;
 	mtx_unlock(&sc->mtx);
 	kproc_exit(0);
@@ -549,7 +587,18 @@ cbb_insert(struct cbb_softc *sc)
 	uint32_t sockevent, sockstate;
 
 	sockevent = cbb_get(sc, CBB_SOCKET_EVENT);
+if(sc->chipset != 0){
 	sockstate = cbb_get(sc, CBB_SOCKET_STATE);
+}else{
+	sockstate = exca_getb(&sc->exca[0], 1);
+	if ((sockstate & (0x4|0x8)) ==0xc){
+		sockstate = CBB_STATE_R2_CARD;
+		exca_putb(&sc->exca[0],EXCA_PWRCTL,EXCA_PWRCTL_OE);
+		exca_putb(&sc->exca[0],
+		EXCA_PWRCTL,EXCA_PWRCTL_OE|EXCA_PWRCTL_AUTOSWITCH_ENABLE|EXCA_PWRCTL_PWR_ENABLE
+		|EXCA_PWRCTL_VPP1_EN1);
+	}else sockstate = 0;
+}
 
 	DEVPRINTF((sc->dev, "card inserted: event=0x%08x, state=%08x\n",
 	    sockevent, sockstate));
@@ -575,7 +624,7 @@ cbb_insert(struct cbb_softc *sc)
 		 * We should power the card down, and try again a couple of
 		 * times if this happens. XXX
 		 */
-		device_printf(sc->dev, "Unsupported card type detected\n");
+		device_printf(sc->dev, "Unsupported card type detected 0x%08x 0x%08x\n",sockevent,sockstate);
 	}
 }
 
@@ -607,10 +656,12 @@ cbb_func_filt(void *arg)
 	 */
 	if (!sc->cardok)
 		return (FILTER_STRAY);
+ if(sc->cbdev != NULL){
 	if (!CBB_CARD_PRESENT(cbb_get(sc, CBB_SOCKET_STATE))) {
 		sc->cardok = 0;
 		return (FILTER_HANDLED);
 	}
+ }
 
 	/*
 	 * nb: don't have to check for giant or not, since that's done in the
@@ -641,10 +692,12 @@ cbb_func_intr(void *arg)
 	if (ih->filt == NULL) {
 		if (!sc->cardok)
 			return;
+ if(sc->cbdev != NULL){
 		if (!CBB_CARD_PRESENT(cbb_get(sc, CBB_SOCKET_STATE))) {
 			sc->cardok = 0;
 			return;
 		}
+ }
 	}
 
 	/*
@@ -665,8 +718,11 @@ cbb_detect_voltage(device_t brdev)
 	struct cbb_softc *sc = device_get_softc(brdev);
 	uint32_t psr;
 	uint32_t vol = CARD_UKN_CARD;
-
+if(sc->chipset != 0){
 	psr = cbb_get(sc, CBB_SOCKET_STATE);
+}else{
+	psr = CBB_STATE_5VCARD|CBB_STATE_5VSOCK;//kotei gomen 
+}
 
 	if (psr & CBB_STATE_5VCARD && psr & CBB_STATE_5VSOCK)
 		vol |= CARD_5V_CARD;
@@ -739,8 +795,12 @@ cbb_power(device_t brdev, int volts)
 	int retval = 0;
 	int on = 0;
 	uint8_t reg = 0;
-
+if(sc->chipset != 0){
 	sock_ctrl = cbb_get(sc, CBB_SOCKET_CONTROL);
+//	printf("cbb_power %x\n",sock_ctrl);
+}else{
+	sock_ctrl =  CBB_SOCKET_CTRL_VCC_5V;
+}
 
 	sock_ctrl &= ~CBB_SOCKET_CTRL_VCCMASK;
 	switch (volts & CARD_VCCMASK) {
@@ -789,6 +849,7 @@ cbb_power(device_t brdev, int volts)
 	 * XXX I wonder if we need to enable the READY bit interrupt in the
 	 * EXCA CSC register for 16-bit cards, and disable the CD bit?
 	 */
+if(sc->chipset != 0){
 	mask = cbb_get(sc, CBB_SOCKET_MASK);
 	mask |= CBB_SOCKET_MASK_POWER;
 	mask &= ~CBB_SOCKET_MASK_CD;
@@ -796,6 +857,7 @@ cbb_power(device_t brdev, int volts)
 	PCI_MASK_CONFIG(brdev, CBBR_BRIDGECTRL,
 	    |CBBM_BRIDGECTRL_INTR_IREQ_ISA_EN, 2);
 	cbb_set(sc, CBB_SOCKET_CONTROL, sock_ctrl);
+}
 	if (on) {
 		mtx_lock(&sc->mtx);
 		cnt = sc->powerintr;
@@ -849,14 +911,20 @@ cbb_power(device_t brdev, int volts)
 	 * NB: Topic95B doesn't set the power cycle bit.  we assume that
 	 * both it and the TOPIC95 behave the same.
 	 */
+if(sc->chipset != 0){
 	cbb_clrb(sc, CBB_SOCKET_MASK, CBB_SOCKET_MASK_POWER);
 	status = cbb_get(sc, CBB_SOCKET_STATE);
+}else{
+	status = exca_getb(&sc->exca[0], 1);
+	if(status & 0x40)status = CBB_STATE_POWER_CYCLE;
+	else status = 0;
+}
 	if (on && sc->chipset != CB_TOPIC95) {
 		if ((status & CBB_STATE_POWER_CYCLE) == 0)
 			device_printf(sc->dev, "Power not on?\n");
 	}
 	if (status & CBB_STATE_BAD_VCC_REQ) {
-		device_printf(sc->dev, "Bad Vcc requested\n");	
+		device_printf(sc->dev, "Bad Vcc %x requested\n",status);	
 		/*
 		 * Turn off the power, and try again.  Retrigger other
 		 * active interrupts via force register.  From NetBSD
@@ -894,8 +962,11 @@ cbb_current_voltage(device_t brdev)
 {
 	struct cbb_softc *sc = device_get_softc(brdev);
 	uint32_t ctrl;
-	
+if(sc->chipset != 0){	
 	ctrl = cbb_get(sc, CBB_SOCKET_CONTROL);
+}else{
+	ctrl = CBB_SOCKET_CTRL_VCC_5V;
+}
 	switch (ctrl & CBB_SOCKET_CTRL_VCCMASK) {
 	case CBB_SOCKET_CTRL_VCC_5V:
 		return CARD_5V_CARD;
@@ -927,13 +998,18 @@ cbb_do_power(device_t brdev)
 	struct cbb_softc *sc = device_get_softc(brdev);
 	uint32_t voltage, curpwr;
 	uint32_t status;
-
 	/* Don't enable OE (output enable) until power stable */
+if(sc->chipset == 0){//why? wi0 freeeeeze (read memreg4 eternal waitready??) at cardbus
 	exca_clrb(&sc->exca[0], EXCA_PWRCTL, EXCA_PWRCTL_OE);
-
+}
 	voltage = cbb_detect_voltage(brdev);
 	curpwr = cbb_current_voltage(brdev);
+if(sc->chipset != 0){
 	status = cbb_get(sc, CBB_SOCKET_STATE);
+}else{
+	status = exca_getb(&sc->exca[0], 1);
+	if(status & 0x40)status = CBB_STATE_POWER_CYCLE;
+}
 	if ((status & CBB_STATE_POWER_CYCLE) && (voltage & curpwr))
 		return 0;
 	/* Prefer lowest voltage supported */
@@ -947,8 +1023,10 @@ cbb_do_power(device_t brdev)
 	else if (voltage & CARD_5V_CARD)
 		cbb_power(brdev, CARD_VCC(5));
 	else {
-		device_printf(brdev, "Unknown card voltage\n");
-		return (ENXIO);
+		device_printf(brdev, "Unknown card voltage but 3V\n");
+		voltage |= CARD_3V_CARD;
+		cbb_power(brdev, CARD_VCC(3));
+//		return (ENXIO);
 	}
 	return (0);
 }
@@ -1274,7 +1352,7 @@ cbb_cardbus_alloc_resource(device_t brdev, device_t child, int type,
 	res = BUS_ALLOC_RESOURCE(device_get_parent(brdev), child, type, rid,
 	    start, end, count, flags & ~RF_ACTIVE);
 	if (res == NULL) {
-		printf("cbb alloc res fail type %d rid %x\n", type, *rid);
+//		printf("cbb alloc res fail type %d rid %x\n", type, *rid);
 		return (NULL);
 	}
 	cbb_insert_res(sc, res, type, *rid);
@@ -1317,9 +1395,12 @@ cbb_pcic_power_enable_socket(device_t brdev, device_t child)
 	DPRINTF(("cbb_pcic_socket_enable:\n"));
 
 	/* power down/up the socket to reset */
+ if(sc->cbdev != NULL){
+//printf("cbb_do_power\n");
 	err = cbb_do_power(brdev);
 	if (err)
 		return (err);
+ }
 	exca_reset(&sc->exca[0], child);
 
 	return (0);
@@ -1337,7 +1418,9 @@ cbb_pcic_power_disable_socket(device_t brdev, device_t child)
 	pause("cbbP1", hz / 100);
 
 	/* power down the socket */
+ if(sc->cbdev != NULL){
 	cbb_power(brdev, CARD_OFF);
+ }
 	exca_putb(&sc->exca[0], EXCA_PWRCTL, 0);
 
 	/* wait 300ms until power fails (Tpf). */
@@ -1403,10 +1486,13 @@ cbb_pcic_alloc_resource(device_t brdev, device_t child, int type, int *rid,
 
 	switch (type) {
 	case SYS_RES_MEMORY:
+ if(sc->cbdev != NULL){
 		if (start < cbb_start_mem)
 			start = cbb_start_mem;
 		if (end < start)
 			end = start;
+ }
+
 		if (count < CBB_MEMALIGN)
 			align = CBB_MEMALIGN;
 		else
@@ -1414,6 +1500,12 @@ cbb_pcic_alloc_resource(device_t brdev, device_t child, int type, int *rid,
 		if (align > (1 << RF_ALIGNMENT(flags)))
 			flags = (flags & ~RF_ALIGNMENT_MASK) | 
 			    rman_make_alignment_flags(align);
+
+	if(sc->exca[0].chipset != 0){
+			start = 0xc0000;//not cardbus 640k-1M
+			end = 0x100000;//under 1M
+	}
+//		printf("memory allocate search for start %llx to end %llx count %llx\n",start,end,count);
 		break;
 	case SYS_RES_IOPORT:
 		if (start < cbb_start_16_io)
@@ -1597,7 +1689,14 @@ cbb_child_present(device_t parent, device_t child)
 {
 	struct cbb_softc *sc = (struct cbb_softc *)device_get_softc(parent);
 	uint32_t sockstate;
-
+if(sc->chipset != 0){
 	sockstate = cbb_get(sc, CBB_SOCKET_STATE);
+}else{
+	sockstate = exca_getb(&sc->exca[0], 1);
+	if((sockstate & (0x4|0x8)) == 0xc){//card inserted
+		sockstate = CBB_SOCKET_EVENT_CD1;
+	}else
+		sockstate = 0;
+}
 	return (CBB_CARD_PRESENT(sockstate) && sc->cardok);
 }

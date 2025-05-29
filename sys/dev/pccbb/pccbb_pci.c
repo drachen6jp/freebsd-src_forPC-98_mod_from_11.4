@@ -72,7 +72,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__FBSDID("$FreeBSD: releng/11.4/sys/dev/pccbb/pccbb_pci.c 331722 2018-03-29 02:50:57Z eadler $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -508,6 +508,9 @@ cbb_chipinit(struct cbb_softc *sc)
 		PCI_MASK_CONFIG(sc->dev, CBBR_DEVCTRL,
 		    & ~(CBBM_DEVCTRL_INT_SERIAL |
 		    CBBM_DEVCTRL_INT_PCI), 1);
+//		pci_write_config(sc->dev, CBBR_LEGACY, 0x3e1, 4);//not searchable for hint
+		pci_write_config(sc->dev, CBBR_LEGACY, 0x3f1, 4);
+		pci_write_config(sc->dev, 0x90, 0x00723bc0, 4);
 		break;
 	case CB_TI12XX:
 		/*

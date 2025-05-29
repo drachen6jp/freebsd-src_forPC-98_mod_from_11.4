@@ -30,7 +30,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__FBSDID("$FreeBSD: releng/11.4/sys/dev/pccbb/pccbb_isa.c 331722 2018-03-29 02:50:57Z eadler $");
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -111,12 +111,25 @@ static struct isa_pnp_id pcic_ids[] = {
 	{EXCA_PNP_82365,		NULL},		/* PNP0E00 */
 	{EXCA_PNP_CL_PD6720,		NULL},		/* PNP0E01 */
 	{EXCA_PNP_VLSI_82C146,		NULL},		/* PNP0E02 */
-	{EXCA_PNP_82365_CARDBUS,	NULL},		/* PNP0E03 */
+//	{EXCA_PNP_82365_CARDBUS,	NULL},		/* PNP0E03 */
 	{EXCA_PNP_SCM_SWAPBOX,		NULL},		/* SCM0469 */
 	{EXCA_NEC_PC9801_102,		NULL},		/* NEC8091 */
 	{EXCA_NEC_PC9821RA_E01,         NULL},          /* NEC8121 */
 	{0}
 };
+
+uint8_t
+cbb_getb_io(struct cbb_softc *sc, uint32_t reg)
+{
+	return (exca_getb(&sc->exca[0], reg));
+}
+
+void
+cbb_setb_io(struct cbb_softc *sc, uint32_t reg, uint32_t val)
+{
+	exca_putb(&sc->exca[0],reg,val&0xff);
+}
+
 
 /************************************************************************/
 /* Probe/Attach								*/
@@ -128,11 +141,12 @@ cbb_isa_activate(device_t dev)
 	struct cbb_softc *sc = device_get_softc(dev);
 	struct resource *res;
 	int rid;
-	int i;
+	int i,intnum;
 
 	/* A little bogus, but go ahead and get the irq for CSC events */
 	rid = 0;
-	res = bus_alloc_resource_any(dev, SYS_RES_IRQ, &rid, RF_ACTIVE);
+//	res = bus_alloc_resource_any(dev, SYS_RES_IRQ, &rid, RF_ACTIVE);
+	res = bus_alloc_resource_any(dev, SYS_RES_IRQ, &rid, RF_SHAREABLE);
 	if (res == NULL) {
 		/*
 		 * No IRQ specified, find one.  This can be due to the PnP
@@ -143,23 +157,97 @@ cbb_isa_activate(device_t dev)
 			if (((1 << i) & isa_intr_mask) == 0)
 				continue;
 			res = bus_alloc_resource(dev, SYS_RES_IRQ, &rid, i, i,
-			    1, RF_ACTIVE);
+			    1, RF_ACTIVE|RF_SHAREABLE);
 		}
 	}
 	if (res == NULL)
 		return (ENXIO);
+	if (res != NULL)
 	sc->irq_res = res;
+	intnum = rman_get_start(res);
+//	printf("IRQ %d allocate\n",intnum);
+
 	rid = 0;
-	res = bus_alloc_resource_any(dev, SYS_RES_IOPORT, &rid, RF_ACTIVE);
+	res = bus_alloc_resource_anywhere(dev, SYS_RES_IOPORT, &rid, 2, RF_ACTIVE);
 	if (res == NULL) {
 		bus_release_resource(dev, SYS_RES_IRQ, 0, sc->irq_res);
 		sc->irq_res = NULL;
 		device_printf(dev, "Cannot allocate I/O\n");
 		return (ENOMEM);
 	}
-	sc->bst = rman_get_bustag(res);
-	sc->bsh = rman_get_bushandle(res);
 	sc->base_res = res;
+	sc->bst = rman_get_bustag(res);//IOport
+	sc->bsh = rman_get_bushandle(res);//IOport
+
+	/* Check to make sure that we have actual hardware */
+	i = exca_probe_slots(dev, &sc->exca[0], sc->bst, sc->bsh);
+	if(i != 0){
+		bus_release_resource(dev, SYS_RES_IRQ, 0, sc->irq_res);
+		sc->irq_res = NULL;
+		bus_release_resource(dev, SYS_RES_IOPORT, 0, sc->base_res);
+		sc->base_res = NULL;
+		return(ENOMEM);
+	}
+
+	sc->exca[0].flags &= ~EXCA_HAS_MEMREG_WIN;
+	exca_putb(&sc->exca[0], EXCA_INTR, EXCA_INTR_RESET);
+#if 0
+	rid = 0;
+	res = bus_alloc_resource_anywhere(dev, SYS_RES_MEMORY, &rid,
+					     0x4000, RF_ACTIVE);
+	if (res == NULL) {
+		bus_release_resource(dev, SYS_RES_IRQ, 0, sc->irq_res);
+		sc->irq_res = NULL;
+		bus_release_resource(dev, SYS_RES_IOPORT, 0, sc->base_res);
+		sc->base_res = NULL;
+		device_printf(dev, "Cannot allocate Memory\n");
+		return (ENOMEM);
+	}
+	sc->base_res = res;
+	sc->bst = rman_get_bustag(res);//Memory but byte access needed
+	sc->bsh = rman_get_bushandle(res);//Memory but byte access needed
+
+	//IO de Window0 wo akeru
+	uint32_t offset = rman_get_start(sc->base_res);
+
+	exca_putb(&sc->exca[0],EXCA_PWRCTL,EXCA_PWRCTL_OE);
+	exca_putb(&sc->exca[0],
+		EXCA_PWRCTL,EXCA_PWRCTL_OE|EXCA_PWRCTL_AUTOSWITCH_ENABLE|EXCA_PWRCTL_PWR_ENABLE
+		|EXCA_PWRCTL_VPP1_EN1);	
+
+	exca_putb(&sc->exca[0],EXCA_SYSMEM_ADDR0_START_LSB
+		,(offset >> EXCA_MEM_SHIFT)&0xff);
+	exca_putb(&sc->exca[0],EXCA_SYSMEM_ADDR0_START_MSB,
+		EXCA_SYSMEM_ADDRX_START_MSB_DATASIZE_16BIT|((offset >> 20)&0x07));
+	exca_putb(&sc->exca[0],EXCA_SYSMEM_ADDR0_STOP_LSB,
+		((offset + 0x3fff)>>EXCA_MEM_SHIFT)&0xff);
+	exca_putb(&sc->exca[0],EXCA_SYSMEM_ADDR0_STOP_MSB,
+		(((offset + 0x3fff) >> 20)&0x07));
+	exca_putb(&sc->exca[0],EXCA_CARDMEM_ADDR0_LSB,0);
+	exca_putb(&sc->exca[0],EXCA_CARDMEM_ADDR0_MSB,EXCA_CARDMEM_ADDRX_MSB_REGACTIVE_ATTR);
+	exca_putb(&sc->exca[0],EXCA_ADDRWIN_ENABLE,
+		EXCA_ADDRWIN_ENABLE_MEMCS16|EXCA_ADDRWIN_ENABLE_MEM0);
+	exca_putb(&sc->exca[0],EXCA_IOCTL,
+		EXCA_IOCTL_IO0_DATASIZE_16BIT|EXCA_IOCTL_IO0_DATASIZE_16BIT);
+
+	for (i = 0;i<0x20;i=i+4){
+		printf("checkmemwin %x %x\n",i,cbb_getb(sc,i));
+		printf("checkmemwin %x %x\n",i,cbb_get(sc,i));
+	}
+
+	sc->exca[0].pccarddev = NULL;
+	exca_init(&sc->exca[0], dev, sc->bst, sc->bsh, 0);//Memory window access mode enable
+	sc->exca[0].flags |= EXCA_HAS_MEMREG_WIN;
+#endif
+	sc->exca[0].pccarddev = NULL;
+	exca_clrb(&sc->exca[0], EXCA_INTR, EXCA_INTR_RESET);
+	exca_putb(&sc->exca[0], EXCA_CSC_INTR, 0);
+	exca_setb(&sc->exca[0], EXCA_INTR, EXCA_INTR_RESET);
+	exca_setb(&sc->exca[0], EXCA_INTR, EXCA_INTR_ENABLE|intnum);
+
+//	i = exca_getb(&sc->exca[0], EXCA_INTR);
+//	printf("pccbb_isa EXCA_INTR %x\n",i);
+
 	return (0);
 }
 
@@ -180,8 +268,6 @@ static int
 cbb_isa_probe(device_t dev)
 {
 	int error;
-	struct cbb_softc *sc = device_get_softc(dev);
-
 	/* Check isapnp ids */
 	error = ISA_PNP_PROBE(device_get_parent(dev), dev, pcic_ids);
 	if (error != 0 && error != ENOENT)
@@ -189,17 +275,49 @@ cbb_isa_probe(device_t dev)
 
 	error = cbb_isa_activate(dev);
 	if (error != 0)
-		return (error);
-
-	/* Check to make sure that we have actual hardware */
-	error = exca_probe_slots(dev, &sc->exca[0], sc->bst, sc->bsh);
-	cbb_isa_deactivate(dev);
+		cbb_isa_deactivate(dev);
 	return (error);
 }
 
 static int
-cbb_isa_attach(device_t dev)
+cbb_isa_attach(device_t brdev)
 {
+
+	struct cbb_softc *sc = (struct cbb_softc *)device_get_softc(brdev);
+	device_t parent;
+
+	parent = device_get_parent(brdev);
+	mtx_init(&sc->mtx, device_get_nameunit(brdev), "cbb", MTX_DEF);
+	sc->dev = brdev;
+
+	/* attach children */
+	sc->exca[0].pccarddev = device_add_child(brdev, "pccard", -1);
+	if (sc->exca[0].pccarddev == NULL)
+		DEVPRINTF((brdev, "WARNING: cannot add pccard bus.\n"));
+	else if (device_probe_and_attach(sc->exca[0].pccarddev) != 0)
+		DEVPRINTF((brdev, "WARNING: cannot attach pccard bus.\n"));
+
+	/* reset 16-bit pcmcia bus */
+//	exca_clrb(&sc->exca[0], EXCA_INTR, EXCA_INTR_RESET);
+
+	/* turn off power */
+	cbb_power(brdev, CARD_OFF);
+
+	/* CSC Interrupt: Card detect interrupt on */
+//	cbb_setb(sc, CBB_SOCKET_MASK, CBB_SOCKET_MASK_CD);
+
+	/* reset interrupt */
+//	cbb_set(sc, CBB_SOCKET_EVENT, cbb_get(sc, CBB_SOCKET_EVENT));
+
+	/* Start the thread */
+	if (kproc_create(cbb_event_thread, sc, &sc->event_thread, 0, 0,
+	    "%s event thread", device_get_nameunit(brdev))) {
+		device_printf(brdev, "unable to create event thread.\n");
+		panic("cbb_create_event_thread");
+	}
+	sc->sc_root_token = root_mount_hold(device_get_nameunit(sc->dev));
+	return (0);
+	//test
 	return (ENOMEM);
 }
 
