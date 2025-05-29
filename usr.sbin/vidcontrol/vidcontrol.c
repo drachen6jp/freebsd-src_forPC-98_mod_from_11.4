@@ -35,7 +35,7 @@
 
 #ifndef lint
 static const char rcsid[] =
-  "$FreeBSD$";
+  "$FreeBSD: releng/11.4/usr.sbin/vidcontrol/vidcontrol.c 331183 2018-03-19 06:45:40Z eadler $";
 #endif /* not lint */
 
 #include <ctype.h>
@@ -68,13 +68,21 @@ static const char rcsid[] =
 /* Screen dump file format revision */
 #define DUMP_FMT_REV	1
 
+#if 1
+static const char *legal_colors[16] = {
+	"black", "blue", "green", "cyan",
+	"red", "magenta", "yellow", "white",
+	"black+uline", "blue+uline", "green+uline", "cyan+uline",
+	"red+uline", "magenta+uline", "yellow+uline", "white+uline"
+};
+#else
 static const char *legal_colors[16] = {
 	"black", "blue", "green", "cyan",
 	"red", "magenta", "brown", "white",
 	"grey", "lightblue", "lightgreen", "lightcyan",
 	"lightred", "lightmagenta", "yellow", "lightwhite"
 };
-
+#endif
 static struct {
 	int			active_vty;
 	vid_info_t		console_info;
@@ -720,11 +728,13 @@ video_mode(int argc, char **argv, int *mode_index)
 				errx(1, "invalid video mode number");
 
 			new_mode_num = atoi(&argv[*mode_index][5]);
+			printf("new mode num = %x\n",new_mode_num);
 		} else {
 			for (i = 0; modes[i].name != NULL; ++i) {
 				if (!strcmp(argv[*mode_index], modes[i].name)) {
 					mode = modes[i].mode;
 					new_mode_num = modes[i].mode_num;
+					printf("new mode num2 = %x\n",new_mode_num);
 					break;
 				}
 			}
@@ -758,12 +768,10 @@ video_mode(int argc, char **argv, int *mode_index)
 		/*
 		 * Try setting the new mode.
 		 */
-
 		if (ioctl(0, mode, NULL) == -1) {
 			revert();
 			errc(1, errno, "setting video mode");
 		}
-
 		/*
 		 * For raster modes it's not enough to just set the mode.
 		 * We also need to explicitly set the raster mode.
