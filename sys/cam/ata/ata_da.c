@@ -108,7 +108,8 @@ typedef enum {
 	ADA_FLAG_ANNOUNCED	= 0x00100000,
 	ADA_FLAG_DIRTY		= 0x00200000,
 	ADA_FLAG_CAN_NCQ_TRIM	= 0x00400000,	/* CAN_TRIM also set */
-	ADA_FLAG_PIM_ATA_EXT	= 0x00800000
+	ADA_FLAG_PIM_ATA_EXT= 0x00800000,
+       ADA_FLAG_CAN_MUL    = 0x01000000
 } ada_flags;
 
 typedef enum {
@@ -1615,6 +1616,11 @@ adadeletemethodsysctl(SYSCTL_HANDLER_ARGS)
 static void
 adasetflags(struct ada_softc *softc, struct ccb_getdev *cgd)
 {
+	if ((cgd->ident_data.multi & 0xff) > 1)
+		softc->flags |= ADA_FLAG_CAN_MUL;
+	else
+		softc->flags &= ~ADA_FLAG_CAN_MUL;
+
 	if ((cgd->ident_data.capabilities1 & ATA_SUPPORT_DMA) &&
 	    (cgd->inq_flags & SID_DMA))
 		softc->flags |= ADA_FLAG_CAN_DMA;
@@ -2336,10 +2342,14 @@ adastart(struct cam_periph *periph, union ccb *start_ccb)
 					}
 				} else {
 					if (bp->bio_cmd == BIO_READ) {
-						ata_48bit_cmd(ataio, ATA_READ_MUL48,
+			if (softc->flags & ADA_FLAG_CAN_MUL)ata_48bit_cmd(ataio, ATA_READ_MUL48,
+						    0, lba, count);
+			else					ata_48bit_cmd(ataio, ATA_READ48,
 						    0, lba, count);
 					} else {
-						ata_48bit_cmd(ataio, ATA_WRITE_MUL48,
+			if (softc->flags & ADA_FLAG_CAN_MUL)ata_48bit_cmd(ataio, ATA_WRITE_MUL48,
+						    0, lba, count);
+			else					ata_48bit_cmd(ataio, ATA_WRITE48,
 						    0, lba, count);
 					}
 				}
@@ -2356,10 +2366,14 @@ adastart(struct cam_periph *periph, union ccb *start_ccb)
 					}
 				} else {
 					if (bp->bio_cmd == BIO_READ) {
-						ata_28bit_cmd(ataio, ATA_READ_MUL,
+		if (softc->flags & ADA_FLAG_CAN_MUL)ata_28bit_cmd(ataio, ATA_READ_MUL,
+						    0, lba, count);
+		else					ata_28bit_cmd(ataio, ATA_READ,
 						    0, lba, count);
 					} else {
-						ata_28bit_cmd(ataio, ATA_WRITE_MUL,
+		if (softc->flags & ADA_FLAG_CAN_MUL)ata_28bit_cmd(ataio, ATA_WRITE_MUL,
+						    0, lba, count);
+		else					ata_28bit_cmd(ataio, ATA_WRITE,
 						    0, lba, count);
 					}
 				}
@@ -3401,7 +3415,13 @@ adasetgeom(struct ada_softc *softc, struct ccb_getdev *cgd)
 	}
 	softc->disk->d_fwsectors = softc->params.secs_per_track;
 	softc->disk->d_fwheads = softc->params.heads;
-	ata_disk_firmware_geom_adjust(softc->disk);
+
+	if ((!(cgd->ident_data.config & 0x8000)) || (cgd->ident_data.multi & 0xfe))
+		ata_disk_firmware_geom_adjust(softc->disk);
+
+	if (bootverbose)
+		printf("DISK Geometory H=%d,S=%d\n",softc->disk->d_fwheads,softc->disk->d_fwsectors);
+
 	softc->disk->d_rotation_rate = cgd->ident_data.media_rotation_rate;
 }
 

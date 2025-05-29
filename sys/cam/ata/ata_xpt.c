@@ -157,7 +157,10 @@ static struct ata_quirk_entry ata_quirk_table[] =
 		  /*vendor*/"*", /*product*/"*", /*revision*/"*"
 		},
 		/*quirks*/0, /*mintags*/0, /*maxtags*/0
+
 	},
+
+
 };
 
 static cam_status	proberegister(struct cam_periph *periph,
@@ -255,6 +258,30 @@ static struct xpt_proto ata_proto_semb = {
 CAM_XPT_PROTO(ata_proto_ata);
 CAM_XPT_PROTO(ata_proto_satapm);
 CAM_XPT_PROTO(ata_proto_semb);
+
+
+
+#define	CAM_CAN_GET_SIMPLE_LUN(x, i)				\
+	((((x)->luns[i].lundata[0] & RPL_LUNDATA_ATYP_MASK) ==	\
+	RPL_LUNDATA_ATYP_PERIPH) ||				\
+	(((x)->luns[i].lundata[0] & RPL_LUNDATA_ATYP_MASK) ==	\
+	RPL_LUNDATA_ATYP_FLAT))
+#define	CAM_GET_SIMPLE_LUN(lp, i, lval)					\
+	if (((lp)->luns[(i)].lundata[0] & RPL_LUNDATA_ATYP_MASK) == 	\
+	    RPL_LUNDATA_ATYP_PERIPH) {					\
+		(lval) = (lp)->luns[(i)].lundata[1];			\
+	} else {							\
+		(lval) = (lp)->luns[(i)].lundata[0];			\
+		(lval) &= RPL_LUNDATA_FLAT_LUN_MASK;			\
+		(lval) <<= 8;						\
+		(lval) |=  (lp)->luns[(i)].lundata[1];			\
+	}
+#define	CAM_GET_LUN(lp, i, lval)					\
+	(lval) = scsi_8btou64((lp)->luns[(i)].lundata);			\
+	(lval) = CAM_EXTLUN_BYTE_SWIZZLE(lval);
+
+#define SCSI_QUIRK(dev)	((struct ata_quirk_entry *)((dev)->quirk))
+
 
 static void
 probe_periph_init()
@@ -575,8 +602,10 @@ negotiate:
 			if (cts.xport_specific.sata.valid & CTS_SATA_VALID_BYTECOUNT)
 				bytecount = cts.xport_specific.sata.bytecount;
 		}
+		if( sectors< (bytecount / ata_logical_sector_size(ident_buf)) )
+			goto smallsect;
 		sectors = bytecount / ata_logical_sector_size(ident_buf);
-
+smallsect:
 		cam_fill_ataio(ataio,
 		    1,
 		    probedone,
@@ -585,7 +614,11 @@ negotiate:
 		    NULL,
 		    0,
 		    30*1000);
+		if (sectors < 2)
+			goto donothing;
 		ata_28bit_cmd(ataio, ATA_SET_MULTI, 0, 0, sectors);
+		break;
+donothing:	ata_28bit_cmd(ataio, 0xe1, 0, 0, 0);
 		break;
 	}
 	case PROBE_INQUIRY:
@@ -706,6 +739,8 @@ negotiate:
 	default:
 		panic("probestart: invalid action state 0x%x\n", softc->action);
 	}
+
+
 	start_ccb->ccb_h.flags |= CAM_DEV_QFREEZE;
 	xpt_action(start_ccb);
 }
@@ -765,6 +800,7 @@ out:
 			xpt_release_devq(path, /*count*/1, /*run_queue*/TRUE);
 		}
 		status = done_ccb->ccb_h.status & CAM_STATUS_MASK;
+
 		if (softc->restart) {
 			softc->faults++;
 			if ((done_ccb->ccb_h.status & CAM_STATUS_MASK) ==
@@ -774,7 +810,6 @@ out:
 				goto done;
 			else
 				softc->restart = 0;
-
 		/* Old PIO2 devices may not support mode setting. */
 		} else if (softc->action == PROBE_SETMODE &&
 		    status == CAM_ATA_STATUS_ERROR &&
@@ -1390,6 +1425,7 @@ typedef struct {
 	union	ccb *request_ccb;
 	struct 	ccb_pathinq *cpi;
 	int	counter;
+	int	lunindex[0];
 } ata_scan_bus_info;
 
 /*
@@ -1477,8 +1513,40 @@ ata_scan_bus(struct cam_periph *periph, union ccb *request_ccb)
 			break;
 		}
 		mtx = xpt_path_mtx(scan_info->request_ccb->ccb_h.path);
-		goto scan_next;
+		mtx_unlock(mtx);
+//		goto scan_next;
+		status = xpt_create_path(&path, NULL,
+		    scan_info->request_ccb->ccb_h.path_id,
+		    scan_info->counter, 0);
+		if (status != CAM_REQ_CMP) {
+			if (request_ccb->ccb_h.func_code == XPT_SCAN_LUN)
+				mtx_unlock(mtx);
+			printf("xpt_scan_bus: xpt_create_path failed"
+			    " with status %#x, bus scan halted\n",
+			    status);
+			xpt_free_ccb(work_ccb);
+			xpt_free_ccb((union ccb *)scan_info->cpi);
+			request_ccb = scan_info->request_ccb;
+			free(scan_info, M_CAMXPT);
+			request_ccb->ccb_h.status = status;
+			xpt_done(request_ccb);
+			break;
+		}
+		xpt_setup_ccb(&work_ccb->ccb_h, path,
+		    scan_info->request_ccb->ccb_h.pinfo.priority);
+		work_ccb->ccb_h.func_code = XPT_SCAN_LUN;
+		work_ccb->ccb_h.cbfcnp = ata_scan_bus;
+		work_ccb->ccb_h.flags |= CAM_UNLOCKED;
+		work_ccb->ccb_h.ppriv_ptr0 = scan_info;
+		work_ccb->crcn.flags = scan_info->request_ccb->crcn.flags;
+
+		xpt_action(work_ccb);
+		mtx_lock(mtx);
+		break;
+
+
 	case XPT_SCAN_LUN:
+#if 0
 		work_ccb = request_ccb;
 		/* Reuse the same CCB to query if a device was really found */
 		scan_info = (ata_scan_bus_info *)work_ccb->ccb_h.ppriv_ptr0;
@@ -1524,10 +1592,10 @@ done:
 		/* Take next device. Wrap from max (PMP) to 0. */
 		scan_info->counter = (scan_info->counter + 1 ) %
 		    (scan_info->cpi->max_target + 1);
-scan_next:
+//scan_next:
 		status = xpt_create_path(&path, NULL,
 		    scan_info->request_ccb->ccb_h.path_id,
-		    scan_info->counter, 0);
+		    scan_info->counter, scan_info->request_ccb->ccb_h.target_lun);
 		if (status != CAM_REQ_CMP) {
 			if (request_ccb->ccb_h.func_code == XPT_SCAN_LUN)
 				mtx_unlock(mtx);
@@ -1550,12 +1618,230 @@ scan_next:
 		work_ccb->ccb_h.ppriv_ptr0 = scan_info;
 		work_ccb->crcn.flags = scan_info->request_ccb->crcn.flags;
 		mtx_unlock(mtx);
-		if (request_ccb->ccb_h.func_code == XPT_SCAN_LUN)
-			mtx = NULL;
 		xpt_action(work_ccb);
+
+		if (work_ccb->ccb_h.func_code == XPT_SCAN_LUN){
+			mtx = NULL;
+		}
+		if (scan_info->request_ccb->ccb_h.target_lun != 0){
+			mtx = NULL;
+		}
 		if (mtx != NULL)
 			mtx_lock(mtx);
+#else //from scsi_xpt.c
+		work_ccb = request_ccb;
+		cam_status status;
+		struct cam_path *path, *oldpath;
+		ata_scan_bus_info *scan_info;
+		struct cam_et *target;
+		struct cam_ed *device, *nextdev;
+		int next_target;
+		path_id_t path_id;
+		target_id_t target_id;
+		lun_id_t lun_id;
+
+		oldpath = request_ccb->ccb_h.path;
+		status = cam_ccb_status(request_ccb);
+		scan_info = (ata_scan_bus_info *)request_ccb->ccb_h.ppriv_ptr0;
+		path_id = request_ccb->ccb_h.path_id;
+		target_id = request_ccb->ccb_h.target_id;
+		lun_id = request_ccb->ccb_h.target_lun;
+		target = request_ccb->ccb_h.path->target;
+		next_target = 1;
+
+		mtx = xpt_path_mtx(scan_info->request_ccb->ccb_h.path);
+		mtx_lock(mtx);
+		mtx_lock(&target->luns_mtx);
+		if (target->luns) {
+			lun_id_t first;
+			u_int nluns = scsi_4btoul(target->luns->length) / 8;
+
+			/*
+			 * Make sure we skip over lun 0 if it's the first member
+			 * of the list as we've actually just finished probing
+			 * it.
+			 */
+			CAM_GET_LUN(target->luns, 0, first);
+			if (first == 0 && scan_info->lunindex[target_id] == 0) {
+				scan_info->lunindex[target_id]++;
+			}
+
+			/*
+			 * Skip any LUNs that the HBA can't deal with.
+			 */
+			while (scan_info->lunindex[target_id] < nluns) {
+				if (scan_info->cpi->hba_misc & PIM_EXTLUNS) {
+					CAM_GET_LUN(target->luns,
+					    scan_info->lunindex[target_id],
+					    lun_id);
+					break;
+				}
+
+				if (CAM_CAN_GET_SIMPLE_LUN(target->luns,
+				    scan_info->lunindex[target_id])) {
+					CAM_GET_SIMPLE_LUN(target->luns,
+					    scan_info->lunindex[target_id],
+					    lun_id);
+					break;
+				}
+					
+				scan_info->lunindex[target_id]++;
+			}
+
+			if (scan_info->lunindex[target_id] < nluns) {
+				mtx_unlock(&target->luns_mtx);
+				next_target = 0;
+				CAM_DEBUG(request_ccb->ccb_h.path,
+				    CAM_DEBUG_PROBE,
+				   ("next lun to try at index %u is %jx\n",
+				   scan_info->lunindex[target_id],
+				   (uintmax_t)lun_id));
+				scan_info->lunindex[target_id]++;
+			} else {
+				mtx_unlock(&target->luns_mtx);
+				/* We're done with scanning all luns. */
+			}
+		} else {
+			mtx_unlock(&target->luns_mtx);
+			device = request_ccb->ccb_h.path->device;
+			/* Continue sequential LUN scan if: */
+			/*  -- we have more LUNs that need recheck */
+			mtx_lock(&target->bus->eb_mtx);
+			nextdev = device;
+			while ((nextdev = TAILQ_NEXT(nextdev, links)) != NULL)
+				if ((nextdev->flags & CAM_DEV_UNCONFIGURED) == 0)
+					break;
+			mtx_unlock(&target->bus->eb_mtx);
+			if (nextdev != NULL) {
+				next_target = 0;
+			/*  -- stop if DirectAccess media. */
+			/*  -- this LUN is connected and its SCSI version
+			 *     allows more LUNs. */
+			} else if ((device->flags & CAM_DEV_UNCONFIGURED) == 0) {
+//				printf("inq_data %x %c %c\n",device->inq_data.device,device->inq_data.product[0],device->inq_data.product[1]);
+				if(device->inq_data.device == 0)//ATA Direct Access
+					next_target = 1;
+				else if((device->inq_data.product[0]=='P') && (device->inq_data.product[1] =='D')){
+					if(lun_id == 0) next_target = 0;
+				}else if((device->inq_data.device == 0x5) && (strncmp(device->inq_data.product,"CD-ROM DRIVE:251",16) == 0)
+						 &&(device->inq_data.revision[0] == '4')){//for CD changer 4.09 4.0C
+					if(lun_id < 3)next_target = 0;
+				}
+			/*  -- this LUN is disconnected, its SCSI version
+			 *     allows more LUNs and we guess they may be. */
+//			} else if ((device->flags & CAM_DEV_INQUIRY_DATA_VALID) != 0) {
+//				if (lun_id < 1)
+//					next_target = 0;
+			}
+			if (next_target == 0) {
+				lun_id++;
+				if (lun_id > scan_info->cpi->max_lun)
+					next_target = 1;
+			}
+//		printf("next_target %x %x lun_id %llx\n",next_target,SCSI_QUIRK(device)->quirks,lun_id);
+		}
+		/*
+		 * Check to see if we scan any further luns.
+		 */
+		if (next_target) {
+			int done;
+
+			/*
+			 * Free the current request path- we're done with it.
+			 */
+			xpt_free_path(oldpath);
+ hop_again:
+			done = 0;
+			if (scan_info->request_ccb->ccb_h.func_code == XPT_SCAN_TGT) {
+				done = 1;
+			} else if (scan_info->cpi->hba_misc & PIM_SEQSCAN) {
+				scan_info->counter++;
+				if (scan_info->counter ==
+				    scan_info->cpi->initiator_id) {
+					scan_info->counter++;
+				}
+				if (scan_info->counter >=
+				    scan_info->cpi->max_target+1) {
+					done = 1;
+				}
+			} else {
+				scan_info->counter--;
+				if (scan_info->counter == 0) {
+					done = 1;
+				}
+			}
+			if (done) {
+				mtx_unlock(mtx);
+				xpt_free_ccb(request_ccb);
+				xpt_free_ccb((union ccb *)scan_info->cpi);
+				request_ccb = scan_info->request_ccb;
+				CAM_DEBUG(request_ccb->ccb_h.path,
+				    CAM_DEBUG_TRACE,
+				   ("SCAN done for %p\n", scan_info));
+				free(scan_info, M_CAMXPT);
+				request_ccb->ccb_h.status = CAM_REQ_CMP;
+				xpt_done(request_ccb);
+				break;
+			}
+
+			if ((scan_info->cpi->hba_misc & PIM_SEQSCAN) == 0) {
+				mtx_unlock(mtx);
+				xpt_free_ccb(request_ccb);
+				break;
+			}
+			status = xpt_create_path(&path, NULL,
+			    scan_info->request_ccb->ccb_h.path_id,
+			    scan_info->counter, 0);
+			if (status != CAM_REQ_CMP) {
+				mtx_unlock(mtx);
+				printf("scsi_scan_bus: xpt_create_path failed"
+				    " with status %#x, bus scan halted\n",
+			       	    status);
+				xpt_free_ccb(request_ccb);
+				xpt_free_ccb((union ccb *)scan_info->cpi);
+				request_ccb = scan_info->request_ccb;
+				free(scan_info, M_CAMXPT);
+				request_ccb->ccb_h.status = status;
+				xpt_done(request_ccb);
+				break;
+			}
+			xpt_setup_ccb(&request_ccb->ccb_h, path,
+			    request_ccb->ccb_h.pinfo.priority);
+			request_ccb->ccb_h.func_code = XPT_SCAN_LUN;
+			request_ccb->ccb_h.cbfcnp = ata_scan_bus;
+			request_ccb->ccb_h.flags |= CAM_UNLOCKED;
+			request_ccb->ccb_h.ppriv_ptr0 = scan_info;
+			request_ccb->crcn.flags =
+			    scan_info->request_ccb->crcn.flags;
+		} else {
+			status = xpt_create_path(&path, NULL,
+						 path_id, target_id, lun_id);
+			/*
+			 * Free the old request path- we're done with it. We
+			 * do this *after* creating the new path so that
+			 * we don't remove a target that has our lun list
+			 * in the case that lun 0 is not present.
+			 */
+			xpt_free_path(oldpath);
+			if (status != CAM_REQ_CMP) {
+				printf("scsi_scan_bus: xpt_create_path failed "
+				       "with status %#x, halting LUN scan\n",
+			 	       status);
+				goto hop_again;
+			}
+			xpt_setup_ccb(&request_ccb->ccb_h, path,
+				      request_ccb->ccb_h.pinfo.priority);
+			request_ccb->ccb_h.func_code = XPT_SCAN_LUN;
+			request_ccb->ccb_h.cbfcnp = ata_scan_bus;
+			request_ccb->ccb_h.flags |= CAM_UNLOCKED;
+			request_ccb->ccb_h.ppriv_ptr0 = scan_info;
+			request_ccb->crcn.flags =
+				scan_info->request_ccb->crcn.flags;
+		}
+		mtx_unlock(mtx);
+		xpt_action(request_ccb);
 		break;
+#endif
 	default:
 		break;
 	}
@@ -1652,7 +1938,7 @@ ata_alloc_device(struct cam_eb *bus, struct cam_et *target, lun_id_t lun_id)
 {
 	struct ata_quirk_entry *quirk;
 	struct cam_ed *device;
-
+//printf("ata alloc device %d %llu\n",target->target_id,lun_id);
 	device = xpt_alloc_device(bus, target, lun_id);
 	if (device == NULL)
 		return (NULL);
