@@ -23,7 +23,7 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- * $FreeBSD$
+ * $FreeBSD: releng/11.4/stand/i386/libi386/libi386.h 346476 2019-04-21 03:36:05Z kevans $
  */
 
 
@@ -101,6 +101,7 @@ uint32_t bd_getbigeom(int bunit);	/* return geometry in bootinfo format */
 int	bd_bios2unit(int biosdev);	/* xlate BIOS device -> biosdisk unit */
 int	bd_unit2bios(struct i386_devdesc *); /* xlate biosdisk -> BIOS device */
 int	bd_getdev(struct i386_devdesc *dev);	/* return dev_t for (dev) */
+unsigned int bd_unit2bioshs(struct i386_devdesc *dev);
 
 ssize_t	i386_copyin(const void *src, vm_offset_t dest, const size_t len);
 ssize_t	i386_copyout(const vm_offset_t src, void *dest, const size_t len);
@@ -114,6 +115,7 @@ void	bios_getmem(void);
 extern uint32_t		bios_basemem;	/* base memory in bytes */
 extern uint32_t		bios_extmem;	/* extended memory in bytes */
 extern vm_offset_t	memtop;		/* last address of physical memory + 1 */
+extern vm_offset_t	memtop0;	/* last address of physical memory + 1 Under 16MB*/
 extern vm_offset_t	memtop_copyin;	/* memtop less heap size for the cases */
 					/*  when heap is at the top of         */
 					/*  extended memory; for other cases   */
@@ -122,7 +124,9 @@ extern uint32_t		high_heap_size;	/* extended memory region available */
 extern vm_offset_t	high_heap_base;	/* for use as the heap */
 
 /* 16KB buffer space for real mode data transfers. */
-#define	BIO_BUFFER_SIZE 0x4000
+//#define	BIO_BUFFER_SIZE 0x4000
+// 64kb 1segment
+#define	BIO_BUFFER_SIZE 0x10000
 void *bio_alloc(size_t size);
 void bio_free(void *ptr, size_t size);
 

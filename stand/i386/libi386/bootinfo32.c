@@ -25,7 +25,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__FBSDID("$FreeBSD: releng/11.4/stand/i386/libi386/bootinfo32.c 346476 2019-04-21 03:36:05Z kevans $");
 
 #include <stand.h>
 #include <sys/param.h>
@@ -232,10 +232,11 @@ bi_load32(char *args, int *howtop, int *bootdevp, vm_offset_t *bip, vm_offset_t 
     kernend = roundup(addr + size, PAGE_SIZE);
     *kernendp = kernend;
 
+#if 0 //これのせいで使わんところを埋められる
     /* patch MODINFOMD_KERNEND */
     md = file_findmetadata(kfp, MODINFOMD_KERNEND);
     bcopy(&kernend, md->md_data, sizeof kernend);
-
+#endif
     /* copy module list and metadata */
     (void)bi_copymodules32(addr);
 
