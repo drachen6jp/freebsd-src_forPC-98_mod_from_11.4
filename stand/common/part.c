@@ -30,6 +30,12 @@ __FBSDID("$FreeBSD$");
 #include <stand.h>
 #include <sys/param.h>
 #include <sys/diskmbr.h>
+#define PC98 1
+#ifdef PC98
+#include <sys/diskpc98.h>
+#include "../i386/libi386/libi386.h"
+#define LOADER_PC98_SUPPORT 1
+#endif
 #include <sys/disklabel.h>
 #include <sys/endian.h>
 #include <sys/gpt.h>
@@ -42,6 +48,8 @@ __FBSDID("$FreeBSD$");
 #include <crc32.h>
 #include <part.h>
 #include <uuid.h>
+
+//#define PART_DEBUG 1
 
 #ifdef PART_DEBUG
 #define	DPRINTF(fmt, args...) printf("%s: " fmt "\n", __func__, ## args)
@@ -381,6 +389,45 @@ mbr_parttype(uint8_t type)
 	return (PART_UNKNOWN);
 }
 
+static enum partition_type
+pc98_parttype(uint8_t type)
+{
+	switch (type & 0x7f) {
+			case PC98_MID_386BSD:		/* FreeBSD */
+				return (PART_FREEBSD);
+			case PC98_SID_386BSD:		/* FreeBSD */
+				return (PART_FREEBSD);
+			case 0x1://FAT16		/* DOS/Windows */
+			case 0x21:
+			case 0x31://NTFS
+			case 0x51:
+			case 0x41://FAT32
+			case 0x61:
+				return (PART_DOS);
+
+				break;
+			}
+	return (PART_UNKNOWN);
+}
+
+static enum partition_type
+tombr_parttype98(uint8_t type)
+{
+	switch (type & 0x7f) {
+			case PC98_MID_386BSD://0x44		/* FreeBSD */
+				return (DOSPTYP_386BSD);
+			case 0x11://FAT12			/* DOS/Windows */
+			case 0x21://FAT16
+				return (DOSPTYP_FAT16);
+			case 0x61:
+				return (DOSPTYP_FAT32LBA);
+			default:
+				break;
+			}
+	return (0);
+}
+
+
 static struct ptable *
 ptable_ebrread(struct ptable *table, void *dev, diskread_t dread)
 {
@@ -617,7 +664,6 @@ ptable_iso9660read(struct ptable *table, void *dev, diskread_t dread)
 	buf = malloc(table->sectorsize);
 	if (buf == NULL)
 		return (table);
-		
 	if (dread(dev, buf, 1, cdb2devb(16)) != 0) {
 		DPRINTF("read failed");
 		ptable_close(table);
@@ -652,6 +698,10 @@ ptable_open(void *dev, uint64_t sectors, uint16_t sectorsize,
 	struct ptable *table;
 	uint8_t *buf;
 	int i, count;
+#ifdef	PC98
+	uint16_t start_c, end_c;
+	unsigned char	bd_hds,bd_sec;
+#endif
 #ifdef LOADER_MBR_SUPPORT
 	struct pentry *entry;
 	uint32_t start, end;
@@ -666,7 +716,6 @@ ptable_open(void *dev, uint64_t sectors, uint16_t sectorsize,
 		DPRINTF("read failed");
 		goto out;
 	}
-
 	table = malloc(sizeof(*table));
 	if (table == NULL)
 		goto out;
@@ -692,12 +741,52 @@ ptable_open(void *dev, uint64_t sectors, uint16_t sectorsize,
 			goto out;
 	}
 #endif
+
 	/* Check the BSD label. */
 	if (ptable_bsdread(table, dev, dread) == NULL) { /* Read error. */
 		table = NULL;
 		goto out;
 	} else if (table->type == PTABLE_BSD)
 		goto out;
+
+//#if defined(LOADER_PC98_SUPPORT)
+#ifdef PC98
+	dread(dev, buf, 1, 0);
+	/* Check the IPL1 magic. */
+  if (buf[4] == 0x49 && buf[5] == 0x50 && buf[6] == 0x4c  && buf[7] == 0x31) {
+		table->type = PTABLE_PC98;
+		dread(dev, buf, 1, 1);
+		unsigned int bioshs = bd_unit2bioshs(dev);
+	for (i = 0; i < 17; i++) {
+		unsigned char bd_hds,bd_sec;
+		bd_hds = bioshs >> 8;
+		bd_sec = bioshs & 0xff;
+		if (bd_hds == 0 || bd_sec == 0){
+			bd_hds = 8;
+			bd_sec = 17;
+		}
+		start_c = buf[i*0x20 + 0xa] | buf[i*0x20 + 0xb]<<8 ;
+		end_c   = buf[i*0x20 +  14] | buf[i*0x20 +  15]<<8;
+		start = (start_c * bd_hds * bd_sec) + (buf[i*0x20 + 9] * bd_sec) + buf[i*0x20 + 8];
+		end =   ( end_c  * bd_hds * bd_sec) + (buf[i*0x20 + 0xd] * bd_sec) + buf[i*0x20 + 0xc];
+		if (start == 0 || end == 0)
+			break;
+
+		entry = malloc(sizeof(*entry));
+		if (entry == NULL)
+			break;
+		entry->part.start = start;
+		entry->part.end = end;
+		entry->part.index = i + 1;
+		entry->part.type = pc98_parttype(buf[i* 0x20 + 1]);
+		STAILQ_INSERT_TAIL(&table->entries, entry, entry);
+		DPRINTF("new IPL1 partition added");
+	}
+	goto out;
+  }
+
+#endif
+
 
 #if defined(LOADER_GPT_SUPPORT) || defined(LOADER_MBR_SUPPORT)
 	/* Check the MBR magic. */
@@ -778,6 +867,9 @@ ptable_open(void *dev, uint64_t sectors, uint16_t sectorsize,
 	}
 #endif /* LOADER_MBR_SUPPORT */
 #endif /* LOADER_MBR_SUPPORT || LOADER_GPT_SUPPORT */
+
+
+
 out:
 	free(buf);
 	return (table);
@@ -823,10 +915,8 @@ int
 ptable_getpart(const struct ptable *table, struct ptable_entry *part, int index)
 {
 	struct pentry *entry;
-
 	if (part == NULL || table == NULL)
 		return (EINVAL);
-
 	STAILQ_FOREACH(entry, &table->entries, entry) {
 		if (entry->part.index != index)
 			continue;
@@ -902,34 +992,20 @@ ptable_getbestpart(const struct ptable *table, struct ptable_entry *part)
 				pref = PREF_NONE;
 		}
 #endif /* LOADER_GPT_SUPPORT */
-#ifdef LOADER_PC98_SUPPORT
+//#ifdef LOADER_PC98_SUPPORT
+#ifdef PC98
 		if (table->type == PTABLE_PC98) {
 			switch(entry->part.type & PC98_MID_MASK) {
 			case PC98_MID_386BSD:		/* FreeBSD */
-				if ((entry->part.type & PC98_MID_BOOTABLE) &&
-				    (preflevel > PREF_FBSD_ACT)) {
-					pref = i;
-					preflevel = PREF_FBSD_ACT;
-				} else if (preflevel > PREF_FBSD) {
-					pref = i;
-					preflevel = PREF_FBSD;
-				}
-				break;
-
+					pref = PREF_FBSD;
+					break;
 			case 0x11:			/* DOS/Windows */
 			case 0x20:
 			case 0x21:
 			case 0x22:
 			case 0x23:
 			case 0x63:
-				if ((entry->part.type & PC98_MID_BOOTABLE) &&
-				    (preflevel > PREF_DOS_ACT)) {
-					pref = i;
-					preflevel = PREF_DOS_ACT;
-				} else if (preflevel > PREF_DOS) {
-					pref = i;
-					preflevel = PREF_DOS;
-				}
+					pref = PREF_DOS_ACT;
 				break;
 			}
 		}
@@ -955,6 +1031,16 @@ ptable_iterate(const struct ptable *table, void *arg, ptable_iterate_t *iter)
 
 	name[0] = '\0';
 	STAILQ_FOREACH(entry, &table->entries, entry) {
+
+//#ifdef LOADER_PC98_SUPPORT
+#ifdef PC98
+		if (table->type == PTABLE_PC98){
+			sprintf(name, "s%d", entry->part.index);
+			printf(" at %llx",entry->part.start);
+		}
+		else
+#endif
+
 #ifdef LOADER_MBR_SUPPORT
 		if (table->type == PTABLE_MBR)
 			sprintf(name, "s%d", entry->part.index);
@@ -979,162 +1065,4 @@ ptable_iterate(const struct ptable *table, void *arg, ptable_iterate_t *iter)
 	}
 	return (ret);
 }
-#ifdef LOADER_PC98_SUPPORT
-static int
-bd_open_pc98(struct open_disk *od, struct i386_devdesc *dev)
-{
-    struct pc98_partition	*dptr;
-    struct disklabel		*lp;
-    int				sector, slice, i;
-    char			buf[BUFSIZE];
 
-    /*
-     * Following calculations attempt to determine the correct value
-     * for d->od_boff by looking for the slice and partition specified,
-     * or searching for reasonable defaults.
-     */
-
-    /*
-     * Find the slice in the DOS slice table.
-     */
-    od->od_nslices = 0;
-    if (od->od_flags & BD_FLOPPY) {
-	sector = 0;
-	goto unsliced;
-    }
-    if (bd_read(od, 0, 1, buf)) {
-	DEBUG("error reading MBR");
-	return (EIO);
-    }
-
-    /* 
-     * Check the slice table magic.
-     */
-    if (((u_char)buf[0x1fe] != 0x55) || ((u_char)buf[0x1ff] != 0xaa)) {
-	/* If a slice number was explicitly supplied, this is an error */
-	if (dev->d_kind.biosdisk.slice > 0) {
-	    DEBUG("no slice table/MBR (no magic)");
-	    return (ENOENT);
-	}
-	sector = 0;
-	goto unsliced;		/* may be a floppy */
-    }
-    if (bd_read(od, 1, 1, buf)) {
-	DEBUG("error reading MBR");
-	return (EIO);
-    }
-
-    /*
-     * copy the partition table, then pick up any extended partitions.
-     */
-    bcopy(buf + PC98_PARTOFF, &od->od_slicetab,
-      sizeof(struct pc98_partition) * PC98_NPARTS);
-    od->od_nslices = PC98_NPARTS;	/* extended slices start here */
-    od->od_flags |= BD_PARTTABOK;
-    dptr = &od->od_slicetab[0];
-
-    /* Is this a request for the whole disk? */
-    if (dev->d_kind.biosdisk.slice == -1) {
-	sector = 0;
-	goto unsliced;
-    }
-
-    /*
-     * if a slice number was supplied but not found, this is an error.
-     */
-    if (dev->d_kind.biosdisk.slice > 0) {
-        slice = dev->d_kind.biosdisk.slice - 1;
-        if (slice >= od->od_nslices) {
-            DEBUG("slice %d not found", slice);
-	    return (ENOENT);
-        }
-    }
-
-    /* Try to auto-detect the best slice; this should always give a slice number */
-    if (dev->d_kind.biosdisk.slice == 0) {
-	slice = bd_bestslice(od);
-        if (slice == -1) {
-	    return (ENOENT);
-        }
-        dev->d_kind.biosdisk.slice = slice;
-    }
-
-    dptr = &od->od_slicetab[0];
-    /*
-     * Accept the supplied slice number unequivocally (we may be looking
-     * at a DOS partition).
-     */
-    dptr += (dev->d_kind.biosdisk.slice - 1);	/* we number 1-4, offsets are 0-3 */
-    sector = dptr->dp_scyl * od->od_hds * od->od_sec +
-	dptr->dp_shd * od->od_sec + dptr->dp_ssect;
-    {
-	int end = dptr->dp_ecyl * od->od_hds * od->od_sec +
-	    dptr->dp_ehd * od->od_sec + dptr->dp_esect;
-	DEBUG("slice entry %d at %d, %d sectors",
-	      dev->d_kind.biosdisk.slice - 1, sector, end-sector);
-    }
-
-    /*
-     * If we are looking at a BSD slice, and the partition is < 0, assume the 'a' partition
-     */
-    if ((dptr->dp_mid == DOSMID_386BSD) && (dev->d_kind.biosdisk.partition < 0))
-	dev->d_kind.biosdisk.partition = 0;
-
- unsliced:
-    /* 
-     * Now we have the slice offset, look for the partition in the disklabel if we have
-     * a partition to start with.
-     *
-     * XXX we might want to check the label checksum.
-     */
-    if (dev->d_kind.biosdisk.partition < 0) {
-	od->od_boff = sector;		/* no partition, must be after the slice */
-	DEBUG("opening raw slice");
-    } else {
-	
-	if (bd_read(od, sector + LABELSECTOR, 1, buf)) {
-	    DEBUG("error reading disklabel");
-	    return (EIO);
-	}
-	DEBUG("copy %d bytes of label from %p to %p", sizeof(struct disklabel), buf + LABELOFFSET, &od->od_disklabel);
-	bcopy(buf + LABELOFFSET, &od->od_disklabel, sizeof(struct disklabel));
-	lp = &od->od_disklabel;
-	od->od_flags |= BD_LABELOK;
-
-	if (lp->d_magic != DISKMAGIC) {
-	    DEBUG("no disklabel");
-	    return (ENOENT);
-	}
-	if (dev->d_kind.biosdisk.partition >= lp->d_npartitions) {
-	    DEBUG("partition '%c' exceeds partitions in table (a-'%c')",
-		  'a' + dev->d_kind.biosdisk.partition, 'a' + lp->d_npartitions);
-	    return (EPART);
-	}
-
-#ifdef DISK_DEBUG
-	/* Complain if the partition is unused unless this is a floppy. */
-	if ((lp->d_partitions[dev->d_kind.biosdisk.partition].p_fstype == FS_UNUSED) &&
-	    !(od->od_flags & BD_FLOPPY))
-	    DEBUG("warning, partition marked as unused");
-#endif
-	
-	od->od_boff = 
-		lp->d_partitions[dev->d_kind.biosdisk.partition].p_offset -
-		lp->d_partitions[RAW_PART].p_offset +
-		sector;
-    }
-    return (0);
-}
-static void
-bd_closedisk(struct open_disk *od)
-{
-    DEBUG("open_disk %p", od);
-#if 0
-    /* XXX is this required? (especially if disk already open...) */
-    if (od->od_flags & BD_FLOPPY)
-	delay(3000000);
-#endif
-    free(od);
-}
-
-#endif /* LOADER_PC98_SUPPORT */

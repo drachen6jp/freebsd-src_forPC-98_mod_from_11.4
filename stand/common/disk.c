@@ -26,7 +26,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__FBSDID("$FreeBSD: releng/11.4/stand/common/disk.c 347182 2019-05-06 08:55:23Z tsoome $");
 
 #include <sys/disk.h>
 #include <sys/queue.h>
@@ -36,7 +36,7 @@ __FBSDID("$FreeBSD$");
 #include <part.h>
 
 #include "disk.h"
-
+//#define DISK_DEBUG 1
 #ifdef DISK_DEBUG
 # define DPRINTF(fmt, args...)	printf("%s: " fmt "\n" , __func__ , ## args)
 #else
@@ -130,6 +130,8 @@ ptable_print(void *arg, const char *pname, const struct ptable_entry *part)
 		dev.dd.d_unit = pa->dev->dd.d_unit;
 		dev.d_slice = part->index;
 		dev.d_partition = -1;
+//		dev.bd_hds = pa->dev->bd_hds;
+//		dev.bd_sec = pa->dev->bd_sec;
 		if (disk_open(&dev, partsize, sectsize) == 0) {
 			/*
 			 * disk_open() for partition -1 on a bsd slice assumes

@@ -23,7 +23,7 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- * $FreeBSD$
+ * $FreeBSD: releng/11.4/stand/common/part.h 332956 2018-04-24 18:19:30Z benno $
  */
 
 #ifndef _PART_H_
@@ -37,7 +37,8 @@ enum ptable_type {
 	PTABLE_MBR,
 	PTABLE_GPT,
 	PTABLE_VTOC8,
-	PTABLE_ISO9660
+	PTABLE_ISO9660,
+	PTABLE_PC98
 };
 
 enum partition_type {
