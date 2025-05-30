@@ -24,11 +24,11 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- * $FreeBSD$
+ * $FreeBSD: releng/11.4/sys/x86/isa/atrtc.c 345590 2019-03-27 19:17:42Z wulf $
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__FBSDID("$FreeBSD: releng/11.4/sys/x86/isa/atrtc.c 345590 2019-03-27 19:17:42Z wulf $");
 
 #include "opt_acpi.h"
 #include "opt_isa.h"
@@ -396,7 +396,7 @@ atrtc_unreg_acpi_cmos_handler(device_t dev)
  * Attach to the ISA PnP descriptors for the timer and realtime clock.
  */
 static struct isa_pnp_id atrtc_ids[] = {
-	{ 0x000bd041 /* PNP0B00 */, "AT realtime clock" },
+//	{ 0x000bd041 /* PNP0B00 */, "AT realtime clock" },
 	{ 0 }
 };
 
@@ -408,7 +408,7 @@ atrtc_probe(device_t dev)
 	result = ISA_PNP_PROBE(device_get_parent(dev), dev, atrtc_ids);
 	/* ENOENT means no PnP-ID, device is hinted. */
 	if (result == ENOENT) {
-		device_set_desc(dev, "AT realtime clock");
+		device_set_desc(dev, "AT realtime clock? PNP?");
 		return (BUS_PROBE_LOW_PRIORITY);
 	}
 	return (result);
