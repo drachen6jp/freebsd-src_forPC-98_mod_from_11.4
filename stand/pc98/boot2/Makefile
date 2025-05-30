@@ -1,4 +1,4 @@
-# $FreeBSD$
+# $FreeBSD: releng/11.4/stand/pc98/boot2/Makefile 330311 2018-03-03 06:37:53Z kevans $
 
 .include <bsd.own.mk>
 
@@ -91,7 +91,13 @@ boot2.ldr:
 boot2.bin: boot2.out
 	${OBJCOPY} -S -O binary boot2.out ${.TARGET}
 
-boot2.out: ${BTXCRT} boot2.o sio.o
+# For __ashldi3
+.PATH: ${SRCTOP}/contrib/llvm-project/compiler-rt/lib/builtins
+CFLAGS.ashldi3.c= -Wno-missing-prototypes -Wno-missing-declarations
+CLEANFILES+= ashldi3.o
+
+
+boot2.out: ${BTXCRT} boot2.o sio.o ashldi3.o
 	${LD} ${LD_FLAGS} -Ttext ${ORG2} -o ${.TARGET} ${.ALLSRC}
 
 boot2.o: boot2.s

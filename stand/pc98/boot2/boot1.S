@@ -77,6 +77,7 @@ main:		cld
 		mov $STACK_OFF,%sp
 
 		push %cx
+		push %dx
 
 		/* Relocate ourself to MEM_REL */
 		push %cs
@@ -135,6 +136,12 @@ main:		cld
 		mov $0x03,%ah
 		int $0x18
 
+		/* BEEP ON */
+//		mov $0x6,%al
+//		mov $0x37,%dx
+//		out %al,%dx
+
+		pop %dx
 		pop %cx
 
 		/* bootstrap passes */
@@ -142,10 +149,11 @@ main:		cld
 		mov %di,%ds
 		mov %di,%es
 		mov %cs,%bx
+
 		cmp $0x1fe0,%bx
 		jz boot_fd
 		cmp $0x1fc0,%bx
-		jnz boot_hd
+		jnz boot_hd		//HDD 1f80
 		xor %cx,%cx
 		mov (DAUA),%al
 		and $0xf0,%al
@@ -155,12 +163,16 @@ main:		cld
 		jnz boot_hd
 boot_fd:	xor %cx,%cx
 		jmp boot_load
-boot_hd:	test %cx,%cx
-		jnz boot_load
-		mov %cs:(boot_cyl),%cx
+boot_hd:
+#		test %cx,%cx
+#		jnz boot_load
+#		mov %cs:(boot_cyl),%cx 
+
 boot_load:	mov %cx,MEM_ARG		/* Save cylinder number */
-		mov %cx,%di
-		xor %dx,%dx
+		mov %dx,%di
+		shl $16,%edi
+		mov %cx,%di		/* Save LBA number? to edi */
+//		xor %dx,%dx		/* head number and sector number */
 		mov $LOAD_SIZE,%bx
 		mov $MEM_BUF,%bp
 		push %cs
@@ -217,8 +229,9 @@ read:		xor %ax,%ax
 		shr %cl,%ah		/* Is SCSI HDD? */
 		pop %cx
 		jc read_load
+read_lba:
 		and $0xff7f,%si		/* SCSI MO */
-		mov %di,%cx
+		mov %di,%cx		/* NEC menu not reach */
 		shr $16,%edi
 		mov %di,%dx
 		jmp read_load

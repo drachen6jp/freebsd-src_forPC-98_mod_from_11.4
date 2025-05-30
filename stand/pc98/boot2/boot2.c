@@ -437,7 +437,7 @@ load(void)
 		return;
 
 	if (N_GETMAGIC(hdr.ex) == ZMAGIC) {
-		addr = hdr.ex.a_entry & 0xffffff;
+		addr = hdr.ex.a_entry & 0xfffffff;
 		p = PTOV(addr);
 		fs_off = PAGE_SIZE;
 		if (xfsread(ino, p, hdr.ex.a_text))
@@ -454,7 +454,7 @@ load(void)
 				j++;
 		}
 		for (i = 0; i < 2; i++) {
-			p = PTOV(ep[i].p_paddr & 0xffffff);
+			p = PTOV(ep[i].p_paddr & 0xfffffff);
 			fs_off = ep[i].p_offset;
 			if (xfsread(ino, p, ep[i].p_filesz))
 				return;
@@ -475,7 +475,7 @@ load(void)
 				p += es[i].sh_size;
 			}
 		}
-		addr = hdr.eh.e_entry & 0xffffff;
+		addr = hdr.eh.e_entry & 0xfffffff;
 		bootinfo.bi_esymtab = VTOP(p);
 	} else {
 		printf("Invalid %s\n", "format");
