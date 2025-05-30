@@ -1,4 +1,4 @@
-# $FreeBSD$
+# $FreeBSD: releng/11.4/stand/pc98/libpc98/Makefile 344377 2019-02-20 19:13:09Z kevans $
 #
 
 .include <bsd.init.mk>
@@ -7,10 +7,10 @@ LIB=			pc98
 
 .PATH:	${BOOTSRC}/i386/libi386
 
-SRCS=	bioscd.c biosdisk.c biosmem.c biospnp.c \
+SRCS=	bio.c biosdisk.c biosmem.c biospnp.c \
 	biospci.c biossmap.c bootinfo.c bootinfo32.c \
 	comconsole.c devicename.c elf32_freebsd.c \
-	i386_copy.c i386_module.c nullconsole.c pc98_sys.c pxe.c pxetramp.s \
+	i386_copy.c i386_module.c nullconsole.c pc98_sys.c pxe.c pxetramp.s\
 	time.c vidconsole.c
 .PATH:	${ZFSSRC}
 SRCS+=	devicename_stubs.c

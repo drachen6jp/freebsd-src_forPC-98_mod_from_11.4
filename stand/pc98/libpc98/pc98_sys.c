@@ -26,7 +26,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__FBSDID("$FreeBSD: releng/11.4/stand/pc98/libpc98/pc98_sys.c 201339 2009-12-31 12:05:48Z nyan $");
 
 #include <btxv86.h>
 #include <machine/cpufunc.h>
@@ -44,6 +44,7 @@ set_machine_type(void)
 
 	/* PC98_SYSTEM_PARAMETER (0x501) */
 	ret = ((*(u_char *)PTOV(0xA1501)) & 0x08) >> 3;
+	ret|= ((*(u_char *)PTOV(0xA1501)) & 0x80) ? M_8M : 0;
 
 	/* Wait V-SYNC */
 	while (inb(0x60) & 0x20) {}
@@ -60,7 +61,13 @@ set_machine_type(void)
 		ret |= M_NEC_PC98;
 	else
 		ret |= M_EPSON_PC98;
-	ret |= (inb(0x42) & 0x20) ? M_8M : 0;
+
+	/* 5 or 8 system clock for i8253A */
+//	if (inb(0x42 != 0xff)	// no usable Printer IO lock? Hirezo?
+//	ret |= (inb(0x42) & 0x20) ? M_8M : 0;
+//	else
+	/* from System work area */
+//	ret |= ((*(u_char *)PTOV(0xA1501)) & 0x80) ? M_8M : 0;
 
 	/* PC98_SYSTEM_PARAMETER(0x400) */
 	if ((*(u_char *)PTOV(0xA1400)) & 0x80)
