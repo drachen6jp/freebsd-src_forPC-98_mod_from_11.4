@@ -12,7 +12,7 @@
  * warranties of merchantability and fitness for a particular
  * purpose.
  *
- * $FreeBSD$
+ * $FreeBSD: releng/11.4/stand/pc98/btx/btx/btx.S 249846 2013-04-24 17:20:45Z dim $
  */
 
 #include <bootargs.h>
@@ -126,6 +126,14 @@ btx_hdr:	.byte 0xeb			# Machine ID
  * Initialization routine.
  */
 init:		cli				# Disable interrupts
+
+//		/* BEEP */
+//		push %dx
+//		mov $0x37,%dx
+//		mov $0x6, %al
+//		out %al,%dx
+//		pop %dx
+//unreached Cx13
 		xor %ax,%ax			# Zero/segment
 		mov %ax,%ss			# Set up
 		mov $MEM_ESP0,%sp		#  stack
@@ -599,9 +607,10 @@ intusr.7:	movl %cr0,%eax			# Leave
 		dec %al				#  protected
 		movl %eax,%cr0			#  mode
 		ljmpw $0x0,$intusr.8
-intusr.8:	xorw %ax,%ax			# Reset %ds
+intusr.8:
+		xorw %ax,%ax			# Reset %ds
 		movw %ax,%ds			#  and
-		movw %ax,%ss			#  %ss
+		movw %ax,%ss			# %ss =10 to 00
 		lidt ivtdesc	 		# Set IVT
 		popl %es			# Restore
 		popl %ds			#  seg
@@ -609,6 +618,28 @@ intusr.8:	xorw %ax,%ax			# Reset %ds
 		popl %gs
 		popal				# Restore gp regs
 		movw $MEM_ESPR-0x16,%sp		# Switch to real mode stack
+
+#		shl $0x10,%eax
+#		popw %gs			#gs broken!
+#		shl $0x10,%ebx
+#		popw %bx
+#		shl $0x10,%ecx
+#		popw %cx
+#		shl $0x10,%edx
+#		popw %dx
+
+#		movw $0x7000,%ax
+#		movw %ax,%ss
+#		pushw %dx
+#		pushw %cx
+#		pushw %bx
+#		pushw %gs
+#		shr $0x10,%eax
+#		shr $0x10,%ebx
+#		shr $0x10,%ecx
+#		shr $0x10,%edx
+#ebfe2:
+#		jmp ebfe2
 		iret				# Call target routine
 /*
  * For the return to real mode we setup a stack frame like this on the real
@@ -633,6 +664,15 @@ intusr.8:	xorw %ax,%ax			# Reset %ds
  * -0x3c	%eflags
  */
 rret_tramp:	movw $MEM_ESPR-0x08,%sp		# Reset stack pointer
+#		shl $0x10,%eax
+#		movw $0x7,%ax
+#		shl $0x10,%edx
+#		movw $0x37,%dx
+#		outb %al,%dx
+#		xorw %ax,%ax
+#		movw %ax,%ss
+#		shr $0x10,%eax
+#		shr $0x10,%edx
 		pushal				# Save gp regs
 		pushl %gs			# Save
 		pushl %fs			#  seg
@@ -651,7 +691,8 @@ rret_tramp:	movw $MEM_ESPR-0x08,%sp		# Reset stack pointer
 		mov %eax,%cr0			#
 		ljmp $SEL_SCODE,$rret_tramp.1	# To 32-bit code
 		.code32
-rret_tramp.1:	xorl %ecx,%ecx			# Zero
+rret_tramp.1:
+		xorl %ecx,%ecx			# Zero
 		movb $SEL_SDATA,%cl		# Setup
 		movw %cx,%ss			#  32-bit
 		movw %cx,%ds			#  seg
