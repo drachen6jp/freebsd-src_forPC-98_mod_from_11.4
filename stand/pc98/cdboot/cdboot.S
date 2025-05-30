@@ -25,7 +25,7 @@
 # SUCH DAMAGE.
 #
 
-# $FreeBSD$
+# $FreeBSD: releng/11.4/stand/pc98/cdboot/cdboot.S 272252 2014-09-28 12:25:27Z nyan $
 
 #
 # Basically, we first create a set of boot arguments to pass to the loaded
@@ -52,6 +52,7 @@
 		.set MEM_BTX_ENTRY,0x9010	# where BTX starts to execute
 		.set MEM_BTX_OFFSET,MEM_PAGE_SIZE # offset of BTX in the loader
 		.set MEM_BTX_CLIENT,0xa000	# where BTX clients live
+#
 #
 # PC98 machine type from sys/pc98/pc98/pc98_machdep.h
 #
@@ -99,7 +100,7 @@
 		.set SECTOR_SIZE,0x800		# size of a sector
 		.set SECTOR_SHIFT,11		# number of place to shift
 		.set BUFFER_LEN,0x100		# number of sectors in buffer
-		.set MAX_READ,0xf800		# max we can read at a time
+		.set MAX_READ,0x1000		# max we can read at a time
 		.set MAX_READ_SEC,MAX_READ >> SECTOR_SHIFT
 		.set MEM_READ_BUFFER,0x9000	# buffer to read from CD
 		.set MEM_VOLDESC,MEM_READ_BUFFER # volume descriptor
@@ -181,8 +182,9 @@ main:		cld
 		/* Load cdboot */
 		xor %ax,%ax
 		mov %ax,%ds
-		mov $0x06,%ah		/* Read data */
+		mov $0x26,%ah		/* Read data retry on */
 		mov (DAUA),%al		/* Read drive */
+		and $0x7f,%al		/* LBA mode */
 		pop %ecx		/* cylinder */
 		xor %dx,%dx		/* head / sector */
 		mov $LOAD_SEG,%bx	/* Load address */
@@ -266,8 +268,13 @@ error:		call putstr
 		call putstr
 		xor %ax,%ax			# Get keypress
 		int $0x18
-		xor %ax,%ax			# CPU reset
-		outb %al,$0xf0
+//		xor %ax,%ax			# CPU reset
+//		outb %al,$0xf0
+		mov $0x13,%ah			# cursor home
+		xor %dx,%dx
+		mov %dx,cursor
+		int $0x18
+		jmp cdboot
 halt:		hlt
 		jmp halt			# Spin
 
@@ -345,6 +352,7 @@ cdboot:		mov %cs,%ax
 		xor %ax,%ax
 		mov %ax,%es
 		mov %es:(DAUA),%al		# Save BIOS boot device
+		and $0x7f,%al
 		mov %al,drive
 		mov %cx,cylinder		# Save BIOS boot cylinder
 
