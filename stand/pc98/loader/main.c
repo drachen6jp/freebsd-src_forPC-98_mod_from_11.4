@@ -75,9 +75,12 @@ static uint64_t
 pc98_loadaddr(u_int type, void *data, uint64_t addr)
 {
 	struct stat st;
-
 	if (type == LOAD_ELF)
 		return (roundup(addr, PAGE_SIZE));
+	/* Separate Memory with Hyper CPU */
+	if (type == LOAD_RAW && addr < 0x1000000 && stat(data, &st) == 0 &&
+	    (st.st_size == -1 || addr + st.st_size > (memtop0&0xf00000) ) )
+		addr = 0x1000000;
 
 	/* We cannot use 15M-16M area on pc98. */
 	if (type == LOAD_RAW && addr < 0x1000000 && stat(data, &st) == 0 &&
@@ -109,6 +112,7 @@ main(void)
      */
     bios_getmem();
 
+#if 0
 #if defined(LOADER_BZIP2_SUPPORT)
     if (high_heap_size > 0) {
 	heap_top = PTOV(high_heap_base + high_heap_size);
@@ -117,7 +121,8 @@ main(void)
 	    memtop_copyin = high_heap_base;
     } else
 #endif
-    {
+#endif
+    {			// Only Main memory 640KB ok?
 	heap_top = (void *)PTOV(bios_basemem);
 	heap_bottom = (void *)end;
     }
@@ -208,14 +213,13 @@ extract_currdev(void)
     int				biosdev = -1;
 
     /* Assume we are booting from a BIOS disk by default */
-    new_currdev.dd.d_dev = &biosdisk;
-
+    new_currdev.dd.d_dev = &bioshd;
     /* new-style boot loaders such as pxeldr and cdldr */
     if (kargs->bootinfo == 0) {
         if ((kargs->bootflags & KARGS_FLAGS_CD) != 0) {
 	    /* we are booting from a CD with cdboot */
 	    new_currdev.dd.d_dev = &bioscd;
-	    new_currdev.dd.d_unit = bc_bios2unit(initial_bootdev);
+	    new_currdev.dd.d_unit = bd_bios2unit(initial_bootdev);
 	} else if ((kargs->bootflags & KARGS_FLAGS_PXE) != 0) {
 	    /* we are booting from pxeldr */
 	    new_currdev.dd.d_dev = &pxedisk;
@@ -236,7 +240,6 @@ extract_currdev(void)
 	new_currdev.d_kind.biosdisk.partition = B_PARTITION(initial_bootdev);
 	biosdev = initial_bootinfo->bi_bios_dev;
 	major = B_TYPE(initial_bootdev);
-
 	/*
 	 * If we are booted by an old bootstrap, we have to guess at the BIOS
 	 * unit number.  We will lose if there is more than one disk type
@@ -250,18 +253,16 @@ extract_currdev(void)
 		biosdev = (major << 3) + 0x80 + B_UNIT(initial_bootdev);
 	}
     }
-
     /*
      * If we are booting off of a BIOS disk and we didn't succeed in determining
      * which one we booted off of, just use disk0: as a reasonable default.
      */
-    if ((new_currdev.dd.d_dev->dv_type == biosdisk.dv_type) &&
+    if ((new_currdev.dd.d_dev->dv_type == bioshd.dv_type) &&
 	((new_currdev.dd.d_unit = bd_bios2unit(biosdev)) == -1)) {
 	printf("Can't work out which disk we are booting from.\n"
 	       "Guessed BIOS device 0x%x not found by probes, defaulting to disk0:\n", biosdev);
 	new_currdev.dd.d_unit = 0;
     }
-
     env_setenv("currdev", EV_VOLATILE, i386_fmtdev(&new_currdev),
 	       i386_setcurrdev, env_nounset);
     env_setenv("loaddev", EV_VOLATILE, i386_fmtdev(&new_currdev), env_noset,
