@@ -568,6 +568,7 @@ bd_int13probe(bdinfo_t *bd)
 		}
 		if (media == 5) { /* SCSI-CDD */
 			bd->bd_flags |= BD_MODEINT13 | BD_OPTICAL;
+			((unsigned *)PTOV(0x460))[bd->bd_unit & 0x0F] |= 0x30000000;//2048Byte/Sector
 			return(1);
 		}
 	}
@@ -1001,17 +1002,17 @@ bd_realstrategy(void *devdata, int rw, daddr_t dblk, size_t size,
 
 		/* Use alternate 4k buffer */
 		bbuf = PTOV(V86_IO_BUFFER);//800:0 to 800:1000 4kb
-		if(bd->bd_sectorsize == 2048){//CBUS SCSI CDROM brake btx main program
-			bbuf = PTOV(0xb0000);//VRAM Red
-		}
+//		if(bd->bd_sectorsize == 2048){//CBUS SCSI CDROM brake btx main program
+//			bbuf = PTOV(0xb0000);//VRAM Red
+//		}
 	}
 	DEBUG("buffer=%x",bio_size);
 	rest = size;
 	rc = 0;
 	while (blks > 0) {
 		int x = min(blks, bio_size / bd->bd_sectorsize);
-		if(bd->bd_sectorsize==2048)
-			x = min(blks,4);//tiisaku kizande yomanaito CBUS SCSI de dame. 4means 8096bytes but need 64kb
+//		if(bd->bd_sectorsize==2048)
+//			x = min(blks,4);//tiisaku kizande yomanaito CBUS SCSI de dame. 4means 8096bytes but need 64kb
 		switch (rw & F_MASK) {
 		case F_READ:
 			DEBUG("read %dblocks from %lld to mem %p", x, dblk, buf);
