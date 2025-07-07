@@ -153,6 +153,42 @@ static struct scsi_low_softc_tab sl_tab = LIST_HEAD_INITIALIZER(sl_tab);
 static struct mtx sl_tab_lock;
 MTX_SYSINIT(sl_tab_lock, &sl_tab_lock, "scsi low table", MTX_DEF);
 
+
+struct _NP2_SCSI_REQUEST_BLOCK {
+	uint16_t	Length;			//not need
+	uint8_t	Function;		//== 0
+	uint8_t	SrbStatus;
+	uint8_t	ScsiStatus;
+	uint8_t	PathId;
+	uint8_t	TargetId;
+	uint8_t	Lun;
+	uint8_t	QueueTag;			//not need
+	uint8_t	QueueAction;			//not need
+	uint8_t	CdbLength;			//not need
+	uint8_t	SenseInfoBufferLength;	//not need
+	uint32_t	SrbFlags;			//not need
+	uint32_t	DataTransferLength;
+	uint32_t	TimeOutValue;			//not need
+	uint32_t	DataBuffer;
+	uint32_t	SenseInfoBuffer;		//not need
+	uint32_t	NextSrb;			//not need
+	uint32_t	OriginalRequest;		//not need
+	uint32_t	SrbExtension;			//not need
+	union
+	{
+		uint32_t InternalStatus;		//not need
+		uint32_t QueueSortKey;		//not need
+	};
+	uint8_t	Cdb[16];
+};
+
+struct NP2STOR_INVOKEINFO{
+	uint32_t version;//==1
+	uint32_t cmd;//==１no_busy
+	uint32_t srbAddress;
+	struct _NP2_SCSI_REQUEST_BLOCK srb;
+};
+
 /**************************************************************
  * Debug, Run test and Statics
  **************************************************************/
@@ -426,6 +462,44 @@ scsi_low_scsi_action_cam(sim, ccb)
 	SCSI_LOW_ASSERT_LOCKED(slp);
 	target = (u_int) (ccb->ccb_h.target_id);
 	lun = (u_int) ccb->ccb_h.target_lun;
+
+ if((inb(0x7ea) == 98) && (inb(0x7eb) == 21)){
+	struct NP2STOR_INVOKEINFO np2;
+
+	np2.version = 1;
+	np2.cmd = 1;
+
+	np2.srb.CdbLength = ccb->ctio.cdb_len;//not need
+	if((np2.srb.CdbLength != 6) && (np2.srb.CdbLength != 10) && (np2.srb.CdbLength != 12) && (np2.srb.CdbLength != 16)) goto noexe;
+	np2.srb.Function = 0;//SRB_FUNCTION_EXECUTE_SCSI
+	np2.srb.PathId = 0;
+	np2.srb.TargetId = target;
+	for(np2.srb.Lun = 0; np2.srb.Lun < np2.srb.CdbLength  ;np2.srb.Lun++){
+	np2.srb.Cdb[np2.srb.Lun] = ccb->ctio.cdb_io.cdb_bytes[np2.srb.Lun];
+	}
+	np2.srb.Lun = lun;
+	np2.srb.DataTransferLength = ccb->ctio.dxfer_len;
+	np2.srb.DataBuffer = (uint32_t)(ccb->ctio.data_ptr);
+	np2.srb.SrbStatus = -1;
+
+	uint32_t np2ptr = (uint32_t)&np2;
+	np2.srbAddress  = np2ptr + 12;
+	outb(0x7ea,(uint8_t)(np2ptr));
+	outb(0x7ea,(uint8_t)(np2ptr >> 8));
+	outb(0x7ea,(uint8_t)(np2ptr >>16));
+	outb(0x7ea,(uint8_t)(np2ptr >>24));
+	outb(0x7eb,0x98);
+	outb(0x7eb,0x01);
+
+	ccb->ctio.scsi_status = np2.srb.ScsiStatus;
+
+	if(np2.srb.SrbStatus == 1)ccb->ccb_h.status = CAM_REQ_CMP;
+	else ccb->ccb_h.status = CAM_REQ_INVALID;
+	xpt_done(ccb);
+	return;
+noexe:
+	outb(0x7eb, 10);
+	}
 
 #ifdef	SCSI_LOW_DEBUG
 	if (SCSI_LOW_DEBUG_GO(SCSI_LOW_DEBUG_ACTION, target) != 0)
@@ -718,9 +792,6 @@ settings_out:
 		strlcpy(cpi->dev_name, cam_sim_name(sim), DEV_IDLEN);
 		cpi->unit_number = cam_sim_unit(sim);
 		cpi->ccb_h.status = CAM_REQ_CMP;
-
-		cpi->maxio = 0x8000;//safety for ct driver
-
 		xpt_done(ccb);
 		break;
 	}
@@ -806,9 +877,8 @@ scsi_low_ccb_setup_cam(slp, cb)
 		cb->ccb_scp.scp_cmdlen = (int) ccb->csio.cdb_len;
 		cb->ccb_scp.scp_data = ccb->csio.data_ptr;
 		cb->ccb_scp.scp_datalen = (int) ccb->csio.dxfer_len;
-		if((ccb->ccb_h.flags & CAM_DIR_MASK) == CAM_DIR_OUT){
+		if((ccb->ccb_h.flags & CAM_DIR_MASK) == CAM_DIR_OUT)
 			cb->ccb_scp.scp_direction = SCSI_LOW_WRITE;
-		}
 		else /* if((ccb->ccb_h.flags & CAM_DIR_MASK) == CAM_DIR_IN) */
 			cb->ccb_scp.scp_direction = SCSI_LOW_READ;
 		cb->ccb_tcmax = ccb->ccb_h.timeout / 1000;
@@ -1207,6 +1277,8 @@ scsi_low_timeout_check(slp)
 	struct lun_info *li;
 	struct slccb *cb = NULL;		/* XXX */
 
+printf("timeout check\n");
+
 	/* selection restart */
 	if (slp->sl_retry_sel != 0)
 	{
@@ -1312,6 +1384,7 @@ bus_reset:
 	scsi_low_init(slp, SCSI_LOW_RESTART_HARD);
 	scsi_low_start(slp);
 	return ERESTART;
+
 }
 
 
@@ -1434,15 +1507,11 @@ scsi_low_attach(slp, openings, ntargs, nluns, targsize, lunsize)
 		return EINVAL;
 	}
 
-
-if (slp->sl_funcs->scsi_low_timeout != NULL){
 	/* start watch dog */
 	slp->sl_timeout_count = 0;
-	callout_reset(&slp->sl_timeout_timer, hz / SCSI_LOW_TIMEOUT_HZ,
-	    scsi_low_timeout, slp);
+//	callout_reset(&slp->sl_timeout_timer, hz / SCSI_LOW_TIMEOUT_HZ,
+//	    scsi_low_timeout, slp);
 //	Sorry I could'nt solve this problem
-}
-
 	mtx_lock(&sl_tab_lock);
 	LIST_INSERT_HEAD(&sl_tab, slp, sl_chain);
 	mtx_unlock(&sl_tab_lock);
@@ -1821,7 +1890,7 @@ scsi_low_cmd_start:
 #endif	/* SCSI_LOW_STATICS */
 		return;
 	}
-printf("scsi_low selection not ok %x\n",rv);
+
 	scsi_low_arbit_fail(slp, cb);
 #ifdef	SCSI_LOW_STATICS
 	scsi_low_statics.nexus_fail ++;
@@ -4020,6 +4089,10 @@ scsi_low_poll(slp, cb)
 	int tcount;
 
 	tcount = 0;
+
+ if((slp->sl_nio > 0) && (inb(0x7ea) == 98) && (inb(0x7eb) == 21))
+	return (0);
+
 	while (slp->sl_nio > 0)
 	{
 		DELAY((1000 * 1000) / SCSI_LOW_POLL_HZ);
