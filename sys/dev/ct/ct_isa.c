@@ -150,8 +150,10 @@ ct_isa_match(device_t dev)
 
 		memset(bs, 0, sizeof(*bs));
 		bshw_read_settings(&ch, bs);
+if((inb(0x7ea) != 98) || (inb(0x7eb) != 21)){
 		bus_set_resource(dev, SYS_RES_IRQ, 0, bs->sc_irq, 1);
 		bus_set_resource(dev, SYS_RES_DRQ, 0, bs->sc_drq, 1);
+}
 	}
 
 
@@ -190,6 +192,7 @@ ct_isa_attach(device_t dev)
 	chp->ch_mem = ct->mem_res;
 	chp->ch_bus_weight = ct_isa_bus_access_weight;
 
+if((inb(0x7ea) != 98) || (inb(0x7eb) != 21)){
 	irq_rid = 0;
 	ct->irq_res = bus_alloc_resource_any(dev, SYS_RES_IRQ, &irq_rid,
 					     RF_ACTIVE);
@@ -200,7 +203,7 @@ ct_isa_attach(device_t dev)
 		ct_space_unmap(dev, ct);
 		return ENXIO;
 	}
-
+}
 	if (ctprobesubr(chp, 0, BSHW_DEFAULT_HOSTID,
 			BSHW_DEFAULT_CHIPCLK, &chiprev) == 0)
 	{
@@ -289,11 +292,16 @@ if(((*hw->hw_dma_init)(ct)) == 0x56){//IF-2771
 
 if(slp->sl_cfgflags & 0x1000)//original parameter
 	{
-	ct->sc_xmode &= ~(CT_XMODE_DMA|CT_XMODE_PIO);//data register mode veryyyy slow
-	printf("data register mode veryyyy slow\n");
+	ct->sc_xmode = CT_XMODE_FIFO;
+//	ct->sc_xmode &= ~(CT_XMODE_DMA|CT_XMODE_PIO);//data register mode veryyyy slow
+//	ct->sc_xmode = 0;//data register mode veryyyy slow
+//	printf("data register mode veryyyy slow\n");
 	hw->hw_dma_start = NULL;
 	hw->hw_dma_stop = NULL;
 	hw->hw_sregaddr = 0;
+
+	ct->ct_pio_xfer_start = bshw_fifo_xfer_start;
+	ct->ct_pio_xfer_stop = bshw_fifo_xfer_stop;
 	}
 else
 {
@@ -305,18 +313,21 @@ else
 	}else isa_dma_init16(bs->sc_drq ,0x10000 ,M_ZERO);
 }
 
-
+	if((inb(0x7ea) == 98) && (inb(0x7eb) == 21)){//NekoProjectII FAST SCSI Controller
+		ct->sc_xmode = 0;//data register mode veryyyy slow
+	}
 
 	mtx_init(&slp->sl_lock, "ct", NULL, MTX_DEF);
 
 	ctattachsubr(ct);
 
+if((inb(0x7ea) != 98) || (inb(0x7eb) != 21)){
 	if (bus_setup_intr(dev, ct->irq_res, INTR_TYPE_CAM | INTR_MPSAFE,
 			   NULL, ctintr, ct, &ct->sc_ih)) {
 		ct_space_unmap(dev, ct);
 		return ENXIO;
 	}
-
+}
 	return 0;
 }
 
